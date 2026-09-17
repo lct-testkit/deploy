@@ -7,6 +7,9 @@ FROM node:24-alpine AS deps
 RUN npm install -g @stoplight/prism-cli@5.16.0
 
 FROM node:24-alpine AS runtime
+# Патчи alpine (openssl и т.п.) на дату сборки — база node:24-alpine не
+# всегда содержит последние security-фиксы своей же ветки.
+RUN apk update && apk upgrade --no-cache
 # Копируем весь пакет, а не /usr/local/bin/prism: это относительный симлинк
 # на dist/index.js, и при копировании одного файла между стадиями он
 # разрешается в момент COPY и ломается (require('yargs') не находит

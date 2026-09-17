@@ -64,6 +64,7 @@ jobs:
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
+          trivyignores: ${{ matrix.context }}/.trivyignore
 
       - name: Записать координаты образа
         run: |
