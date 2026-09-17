@@ -34,14 +34,14 @@ images:
     repo: deploy
     context: mocks/lms
     dockerfile: Dockerfile
-    tag: ""
-    digest: ""
+    tag: "sha-d801ce2"
+    digest: "sha256:669aab36ddef8f2436b428f3661150627877ed74ebd72b914c7450c99c02d224"
   mock-cms:
     repo: deploy
     context: mocks/cms
     dockerfile: Dockerfile
-    tag: ""
-    digest: ""
+    tag: "sha-d801ce2"
+    digest: "sha256:7a1c137b8f389356797e4423d57438310d07e6b11daeec5c88680af432834f73"
 
 # Сервис compose/helm -> имя образа.
 # api/worker/scheduler делят один образ, отличаются entrypoint'ом
