@@ -1,0 +1,97 @@
+name: validate
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  yaml:
+    name: yamllint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pipx run yamllint --strict -c .yamllint.yml .
+
+  images-manifest:
+    name: images.yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pyyaml
+      - run: python scripts/validate_images.py images.yaml
+
+  dockerfiles:
+    name: hadolint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint по всем Dockerfile
+        run: |
+          mapfile -t files < <(git ls-files '*Dockerfile' '*Dockerfile.*' '*.Dockerfile')
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "Dockerfile ещё нет — фаза 3"
+            exit 0
+          fi
+          rc=0
+          for f in "${files[@]}"; do
+            echo "::group::$f"
+            docker run --rm -i hadolint/hadolint:latest hadolint - < "$f" || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
+
+  compose:
+    name: docker compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка синтаксиса и разрешения переменных
+        run: |
+          if [ ! -f compose/docker-compose.yml ]; then
+            echo "compose ещё нет — фаза 4"
+            exit 0
+          fi
+          docker compose \
+            -f compose/docker-compose.yml \
+            --env-file compose/.env.example \
+            config --quiet
+
+  helm:
+    name: helm lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Проверка чарта и отрендеренных манифестов
+        run: |
+          if [ ! -f charts/rtk-crm/Chart.yaml ]; then
+            echo "чарта ещё нет — фаза 5"
+            exit 0
+          fi
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm lint charts/rtk-crm
+          helm template charts/rtk-crm \
+            | docker run --rm -i ghcr.io/yannh/kubeconform:latest -strict -summary -
+
+  drift:
+    name: compose vs helm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Расхождение версий образов между compose и values
+        run: |
+          if [ ! -f scripts/check_drift.py ]; then
+            echo "drift-проверки ещё нет — фаза 5"
+            exit 0
+          fi
+          python scripts/check_drift.py

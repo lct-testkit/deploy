@@ -1,0 +1,106 @@
+# Единый источник истины по образам RTK School CRM.
+# Из этого файла генерируются compose и Helm values .
+# tag/digest для собственных образов заполняет CI бэка/фронта через
+# repository_dispatch -> PR в этот репозиторий. Руками не правим.
+version: 1
+
+registry:
+  host: ghcr.io
+  project: lct-testkit
+
+# Образы, которые собираем сами.
+# repo  — репозиторий в организации, где лежит исходник
+# context / dockerfile — путь внутри того репозитория
+images:
+  api:
+    repo: backend
+    context: .
+    dockerfile: Dockerfile
+    tag: ""
+    digest: ""
+  web:
+    repo: frontend
+    context: .
+    dockerfile: Dockerfile
+    tag: ""
+    digest: ""
+  bitrix-connector:
+    repo: backend
+    context: connectors/bitrix
+    dockerfile: Dockerfile
+    tag: ""
+    digest: ""
+  mock-lms:
+    repo: deploy
+    context: mocks/lms
+    dockerfile: Dockerfile
+    tag: ""
+    digest: ""
+  mock-cms:
+    repo: deploy
+    context: mocks/cms
+    dockerfile: Dockerfile
+    tag: ""
+    digest: ""
+  keycloak-config:
+    repo: deploy
+    context: keycloak
+    dockerfile: Dockerfile
+    tag: ""
+    digest: ""
+
+# Сервис compose/helm -> имя образа.
+# api/worker/scheduler делят один образ, отличаются entrypoint'ом
+services:
+  api: api
+  worker: api
+  scheduler: api
+  web: web
+  bitrix-connector: bitrix-connector
+  mock-lms: mock-lms
+  mock-cms: mock-cms
+  keycloak-config: keycloak-config
+
+# Внешние образы. Тоже попадают в офлайн-бандл, поэтому
+# пиним по digest, а не только по тегу — иначе "тот же тег" на чистой
+# машине может оказаться другим образом.
+external:
+  caddy:
+    ref: docker.io/library/caddy:2.8-alpine
+    digest: ""
+  db:
+    ref: docker.io/library/postgres:16-alpine
+    digest: ""
+  kc-db:
+    ref: docker.io/library/postgres:16-alpine
+    digest: ""
+  keycloak:
+    ref: quay.io/keycloak/keycloak:25.0
+    digest: ""
+  redis:
+    ref: docker.io/library/redis:7-alpine
+    digest: ""
+  seaweedfs:
+    ref: docker.io/chrislusf/seaweedfs:3.68
+    digest: ""
+
+# Профили — что не входит в критический путь и поднимается по требованию.
+# Держим здесь, чтобы список сервисов был в одном месте.
+profiles:
+  core:
+    - caddy
+    - db
+    - kc-db
+    - keycloak
+    - keycloak-config   # one-shot: импорт realm, отрабатывает и выходит
+    - redis
+    - api
+    - worker
+    - scheduler
+    - web
+  integrations:
+    - bitrix-connector
+    - mock-lms
+    - mock-cms
+  storage:
+    - seaweedfs

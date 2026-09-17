@@ -1,0 +1,24 @@
+# Правила под GitHub Actions и Helm-шаблоны.
+
+extends: default
+
+ignore: |
+  charts/**/templates/
+  .git/
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  comments:
+    min-spaces-from-content: 1
+  truthy:
+    # в workflow ключ `on:` — не булево значение
+    allowed-values: ["true", "false"]
+    check-keys: false
+  document-start: disable
+  braces:
+    max-spaces-inside: 1
+  indentation:
+    spaces: 2
+    indent-sequences: consistent

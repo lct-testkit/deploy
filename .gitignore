@@ -1,0 +1,9 @@
+.env
+*.env
+!*.env.example
+*.tgz
+charts/**/charts/
+dist/
+bundle/
+__pycache__/
+DEVOPS_PLAN.md
