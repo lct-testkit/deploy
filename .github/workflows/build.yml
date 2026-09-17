@@ -18,7 +18,6 @@ concurrency:
 
 permissions:
   contents: write
-  pull-requests: write
   packages: write
 
 jobs:
@@ -116,12 +115,16 @@ jobs:
       - name: Самопроверка манифеста
         run: python scripts/validate_images.py images.yaml
 
-      - uses: peter-evans/create-pull-request@v7
-        with:
-          commit-message: "chore(images): обновить tag/digest после сборки"
-          title: "chore(images): обновить tag/digest после сборки"
-          body: |
-            Автоматическое обновление `images.yaml` после успешной сборки
-            и push в GHCR (workflow `build.yml`, run ${{ github.run_id }}).
-          branch: bot/update-images-${{ github.run_id }}
-          add-paths: images.yaml
+      - name: Закоммитить и запушить в main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet -- images.yaml; then
+            echo "images.yaml не изменился — пропуск коммита"
+            exit 0
+          fi
+          git add images.yaml
+          git commit -m "chore(images): обновить tag/digest после сборки (run ${{ github.run_id }})"
+          git pull --rebase origin main
+          git push origin HEAD:main
