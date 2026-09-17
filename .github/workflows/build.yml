@@ -1,0 +1,126 @@
+name: build
+
+# Собирает и пушит собственные образы deploy-репо (сейчас — мок-сервисы;
+# новые контексты добавляются в matrix ниже). backend/frontend публикуют
+# свои образы своими workflow и присылают repository_dispatch — сюда это
+# не относится.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mocks/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: write
+
+jobs:
+  build:
+    name: build (${{ matrix.image }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: mock-lms
+            context: mocks/lms
+          - image: mock-cms
+            context: mocks/cms
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Короткий sha
+        id: sha
+        run: echo "short=sha-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: ghcr.io/lct-testkit/${{ matrix.image }}:${{ steps.sha.outputs.short }}
+          cache-from: type=registry,ref=ghcr.io/lct-testkit/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/lct-testkit/${{ matrix.image }}:buildcache,mode=max
+
+      - name: Trivy
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: ghcr.io/lct-testkit/${{ matrix.image }}:${{ steps.sha.outputs.short }}
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+      - name: Записать координаты образа
+        run: |
+          mkdir -p /tmp/image-refs
+          cat > /tmp/image-refs/${{ matrix.image }}.json <<EOF
+          {
+            "image": "${{ matrix.image }}",
+            "tag": "${{ steps.sha.outputs.short }}",
+            "digest": "${{ steps.build.outputs.digest }}"
+          }
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: image-ref-${{ matrix.image }}
+          path: /tmp/image-refs/${{ matrix.image }}.json
+          retention-days: 1
+
+  update-manifest:
+    name: обновить images.yaml
+    needs: build
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml ruamel.yaml
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: image-ref-*
+          path: /tmp/image-refs
+          merge-multiple: true
+
+      - name: Проставить tag/digest
+        run: |
+          set -euo pipefail
+          for f in /tmp/image-refs/*.json; do
+            image=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['image'])" "$f")
+            tag=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['tag'])" "$f")
+            digest=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['digest'])" "$f")
+            python scripts/update_image_refs.py "$image" "$tag" "$digest"
+          done
+
+      - name: Самопроверка манифеста
+        run: python scripts/validate_images.py images.yaml
+
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore(images): обновить tag/digest после сборки"
+          title: "chore(images): обновить tag/digest после сборки"
+          body: |
+            Автоматическое обновление `images.yaml` после успешной сборки
+            и push в GHCR (workflow `build.yml`, run ${{ github.run_id }}).
+          branch: bot/update-images-${{ github.run_id }}
+          add-paths: images.yaml

@@ -42,12 +42,6 @@ images:
     dockerfile: Dockerfile
     tag: ""
     digest: ""
-  keycloak-config:
-    repo: deploy
-    context: keycloak
-    dockerfile: Dockerfile
-    tag: ""
-    digest: ""
 
 # Сервис compose/helm -> имя образа.
 # api/worker/scheduler делят один образ, отличаются entrypoint'ом
@@ -59,7 +53,6 @@ services:
   bitrix-connector: bitrix-connector
   mock-lms: mock-lms
   mock-cms: mock-cms
-  keycloak-config: keycloak-config
 
 # Внешние образы. Тоже попадают в офлайн-бандл, поэтому
 # пиним по digest, а не только по тегу — иначе "тот же тег" на чистой
@@ -92,7 +85,6 @@ profiles:
     - db
     - kc-db
     - keycloak
-    - keycloak-config   # one-shot: импорт realm, отрабатывает и выходит
     - redis
     - api
     - worker

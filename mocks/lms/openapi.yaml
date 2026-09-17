@@ -1,0 +1,206 @@
+# Контракт-заглушка LMS (спека §4.14): реальный контракт заказчик пока не
+# предоставил. Когда появится — меняется этот файл и LMS_BASE_URL в backend,
+# код интеграции (спринт 7, app/modules/integration) не трогается.
+#
+# Обслуживается Stoplight Prism (см. Dockerfile) — сервер генерируется прямо
+# из этого файла, руками не пишется. Примеры ниже подобраны так, чтобы демо
+# показывало правдоподобно прогрессирующих студентов, а не случайный шум.
+openapi: 3.1.0
+info:
+  title: LMS API (мок)
+  version: "0.1.0"
+  description: >
+    Заглушка API системы обучения (LMS). Наш backend опрашивает её по
+    расписанию (GET .../progress) и пушит статус зачисления (POST
+    .../enrollments) при переходе сделки в статус «Запуск обучения».
+servers:
+  - url: http://mock-lms:4010
+paths:
+  /health/live:
+    get:
+      operationId: healthLive
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+              example:
+                status: ok
+
+  /api/students/progress:
+    get:
+      operationId: listProgress
+      summary: Курсорная выборка прогресса обучения
+      parameters:
+        - name: updated_since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Страница записей прогресса
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ProgressRecord"
+                  next_cursor:
+                    type: string
+                    nullable: true
+              examples:
+                progressing_cohort:
+                  summary: Группа студентов на разных стадиях курса
+                  value:
+                    items:
+                      - external_student_id: "std-1001"
+                        email: "ivanova@example.edu"
+                        external_course_id: "crs-python-basics"
+                        enrolled_at: "2026-08-01T09:00:00Z"
+                        progress_pct: 92
+                        score: 88
+                        completed_at: null
+                        last_activity_at: "2026-09-15T14:22:00Z"
+                        updated_at: "2026-09-15T14:22:00Z"
+                      - external_student_id: "std-1002"
+                        email: "petrov@example.edu"
+                        external_course_id: "crs-python-basics"
+                        enrolled_at: "2026-08-01T09:00:00Z"
+                        progress_pct: 47
+                        score: null
+                        completed_at: null
+                        last_activity_at: "2026-09-14T10:05:00Z"
+                        updated_at: "2026-09-14T10:05:00Z"
+                      - external_student_id: "std-1003"
+                        email: "sidorov@example.edu"
+                        external_course_id: "crs-data-analysis"
+                        enrolled_at: "2026-07-15T09:00:00Z"
+                        progress_pct: 100
+                        score: 95
+                        completed_at: "2026-09-10T18:30:00Z"
+                        last_activity_at: "2026-09-10T18:30:00Z"
+                        updated_at: "2026-09-10T18:30:00Z"
+                    next_cursor: null
+
+  /api/enrollments:
+    post:
+      operationId: createEnrollment
+      summary: Пуш статуса зачисления при запуске обучения
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnrollmentRequest"
+            example:
+              external_course_id: "crs-python-basics"
+              student:
+                email: "novikov@example.edu"
+                first_name: "Игорь"
+                last_name: "Новиков"
+              deal_ref: "D-2026-00431"
+      responses:
+        "201":
+          description: Зачисление создано
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnrollmentResponse"
+              example:
+                enrollment_id: "enr-7f3a"
+                status: enrolled
+
+components:
+  schemas:
+    ProgressRecord:
+      type: object
+      required:
+        - external_student_id
+        - email
+        - external_course_id
+        - enrolled_at
+        - progress_pct
+        - updated_at
+      properties:
+        external_student_id:
+          type: string
+        email:
+          type: string
+          format: email
+        external_course_id:
+          type: string
+        enrolled_at:
+          type: string
+          format: date-time
+        progress_pct:
+          type: integer
+          minimum: 0
+          maximum: 100
+        score:
+          type: integer
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        last_activity_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    EnrollmentRequest:
+      type: object
+      required: [external_course_id, student, deal_ref]
+      properties:
+        external_course_id:
+          type: string
+        student:
+          type: object
+          required: [email, first_name, last_name]
+          properties:
+            email:
+              type: string
+              format: email
+            first_name:
+              type: string
+            last_name:
+              type: string
+        deal_ref:
+          type: string
+    EnrollmentResponse:
+      type: object
+      required: [enrollment_id, status]
+      properties:
+        enrollment_id:
+          type: string
+        status:
+          type: string
+          enum: [enrolled, already_enrolled]

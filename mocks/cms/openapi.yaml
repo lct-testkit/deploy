@@ -1,0 +1,164 @@
+# Контракт-заглушка сайта на Laravel CMS (спека §4.14): реальный контракт
+# заказчик пока не предоставил. Когда появится — меняется этот файл и базовый
+# URL в backend, код интеграции не трогается.
+#
+# Это API самой CMS, которую наш backend опрашивает исходящим poll'ом.
+# Входящий webhook POST /api/v1/integrations/cms/leads — ручка НАШЕГО
+# backend, сюда не входит.
+#
+# Обслуживается Stoplight Prism (см. Dockerfile) — сервер генерируется прямо
+# из этого файла, руками не пишется.
+openapi: 3.1.0
+info:
+  title: Laravel CMS API (мок)
+  version: "0.1.0"
+  description: >
+    Заглушка API сайта на Laravel CMS. Используется backend'ом для
+    исходящего опроса лидов (в дополнение к входящему webhook).
+servers:
+  - url: http://mock-cms:4010
+paths:
+  /health/live:
+    get:
+      operationId: healthLive
+      summary: Liveness
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+              example:
+                status: ok
+
+  /api/v1/leads:
+    get:
+      operationId: listLeads
+      summary: Курсорная выборка лидов
+      parameters:
+        - name: updated_since
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date-time
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        "200":
+          description: Страница лидов
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Lead"
+                  next_cursor:
+                    type: string
+                    nullable: true
+              examples:
+                b2c_leads:
+                  summary: Заявки с сайта за последние сутки
+                  value:
+                    items:
+                      - lead_id: "lead-3001"
+                        name: "Мария Кузнецова"
+                        phone: "+79261234567"
+                        email: "kuznetsova@example.com"
+                        product_interest: "python-basics"
+                        source_campaign: "yandex-direct-sept"
+                        submitted_at: "2026-09-16T08:12:00Z"
+                        updated_at: "2026-09-16T08:12:00Z"
+                      - lead_id: "lead-3002"
+                        name: "Дмитрий Волков"
+                        phone: "+79161112233"
+                        email: "volkov@example.com"
+                        product_interest: "data-analysis"
+                        source_campaign: "organic"
+                        submitted_at: "2026-09-16T11:47:00Z"
+                        updated_at: "2026-09-16T11:47:00Z"
+                    next_cursor: null
+
+  /api/v1/leads/{lead_id}:
+    get:
+      operationId: getLead
+      summary: Детали лида
+      parameters:
+        - name: lead_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Лид найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Lead"
+              example:
+                lead_id: "lead-3001"
+                name: "Мария Кузнецова"
+                phone: "+79261234567"
+                email: "kuznetsova@example.com"
+                product_interest: "python-basics"
+                source_campaign: "yandex-direct-sept"
+                submitted_at: "2026-09-16T08:12:00Z"
+                updated_at: "2026-09-16T08:12:00Z"
+        "404":
+          description: Лид не найден
+
+components:
+  schemas:
+    Lead:
+      type: object
+      required:
+        - lead_id
+        - name
+        - phone
+        - submitted_at
+        - updated_at
+      properties:
+        lead_id:
+          type: string
+        name:
+          type: string
+        phone:
+          type: string
+        email:
+          type: string
+          format: email
+          nullable: true
+        product_interest:
+          type: string
+          nullable: true
+        source_campaign:
+          type: string
+          nullable: true
+        submitted_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
