@@ -20,6 +20,6 @@ USER node
 # wget уже есть в alpine (busybox) — ничего лишнего не ставим, тот же
 # принцип, что и в backend/Dockerfile (там ради этого используют python -c).
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=5 \
-    CMD wget -q -O- http://127.0.0.1:4010/health/live || exit 1
+    CMD ["wget", "-q", "-O-", "http://127.0.0.1:4010/health/live"]
 
 ENTRYPOINT ["node", "/usr/local/lib/node_modules/@stoplight/prism-cli/dist/index.js", "mock", "-h", "0.0.0.0", "-p", "4010", "/openapi.yaml"]

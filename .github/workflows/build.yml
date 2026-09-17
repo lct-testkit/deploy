@@ -58,7 +58,7 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/lct-testkit/${{ matrix.image }}:buildcache,mode=max
 
       - name: Trivy
-        uses: aquasecurity/trivy-action@0.29.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ghcr.io/lct-testkit/${{ matrix.image }}:${{ steps.sha.outputs.short }}
           severity: CRITICAL,HIGH

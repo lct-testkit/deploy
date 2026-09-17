@@ -46,7 +46,11 @@ jobs:
           rc=0
           for f in "${files[@]}"; do
             echo "::group::$f"
-            docker run --rm -i hadolint/hadolint:latest hadolint - < "$f" || rc=1
+            # info: не валим сборку на стилистике (например, именованный
+            # non-root USER вместо числового UID — тот же приём, что и в
+            # backend/Dockerfile). warning и выше остаются блокирующими.
+            docker run --rm -i hadolint/hadolint:latest \
+              hadolint --failure-threshold warning - < "$f" || rc=1
             echo "::endgroup::"
           done
           exit $rc
