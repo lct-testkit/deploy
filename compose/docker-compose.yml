@@ -276,7 +276,9 @@ services:
     networks: [crm]
 
   caddy:
-    image: docker.io/library/caddy@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17
+    # 2.11, не 2.8: Trivy 22.09.2026 нашёл 87 CVE в 2.8.4 (5 CRITICAL) с
+    # фиксом только в линии 2.11.x — см. ../../frontend/.trivyignore.
+    image: docker.io/library/caddy@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
     restart: unless-stopped
     ports:
       - "${HTTP_PORT:-8080}:8080"

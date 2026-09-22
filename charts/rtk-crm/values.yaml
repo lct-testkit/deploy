@@ -46,9 +46,11 @@ images:
     tag: "25.0"
     digest: "sha256:82c5b7a110456dbd42b86ea572e728878549954cc8bd03cd65410d75328095d2"
   caddy:
+    # 2.11, не 2.8: Trivy 22.09.2026 нашёл 87 CVE в 2.8.4 (5 CRITICAL) с
+    # фиксом только в линии 2.11.x — см. frontend/.trivyignore.
     repository: docker.io/library/caddy
-    tag: 2.8-alpine
-    digest: "sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17"
+    tag: 2.11-alpine
+    digest: "sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e"
   ntp:
     repository: docker.io/cturra/ntp
     tag: latest
