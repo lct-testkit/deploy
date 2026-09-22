@@ -1,5 +1,7 @@
 # deploy — RTK School CRM
 
+<sub>Команда **«Тесткит»** — [github.com/lct-testkit](https://github.com/lct-testkit)</sub>
+
 Инфраструктурный репозиторий проекта RTK School CRM: сборка образов,
 CI/CD, развёртывание (живой демо-стенд, Kubernetes, офлайн-поставка).
 Бизнес-логика живёт в соседних репозиториях организации `lct-testkit` —
