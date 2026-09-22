@@ -22,8 +22,8 @@ images:
     repo: frontend
     context: .
     dockerfile: Dockerfile
-    tag: ""
-    digest: ""
+    tag: "sha-96dd510"
+    digest: "sha256:b19e757d0f13f6376fcc64033bbaf8f14dddf8324a8744c90bf523626ce78f01"
   mock-lms:
     repo: deploy
     context: mocks/lms
