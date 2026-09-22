@@ -31,11 +31,23 @@ jobs:
       - name: Манифест образов должен быть полным (нет пустых tag/digest)
         run: python scripts/validate_images.py images.yaml
 
+      - name: GHCR_PULL_TOKEN задан?
+        run: |
+          if [ -z "${{ secrets.GHCR_PULL_TOKEN }}" ]; then
+            echo "::error::GHCR_PULL_TOKEN не задан — см. docs/ghcr-setup.md п.1/п.5."
+            echo "::error::GITHUB_TOKEN этого workflow не видит пакеты api/web —"
+            echo "::error::они опубликованы из backend/frontend, а не из deploy"
+            echo "::error::(GHCR так и работает: кросс-репо пакеты по умолчанию"
+            echo "::error::недоступны GITHUB_TOKEN'у другого репозитория, даже"
+            echo "::error::в той же организации)."
+            exit 1
+          fi
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
 
       - name: Версия
         id: version
