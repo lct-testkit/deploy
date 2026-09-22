@@ -1,0 +1,141 @@
+# caddy — единая точка входа контура и TLS-терминация (см. files/Caddyfile
+# для описания единственного отличия K8s-версии Caddyfile от
+# backend/deploy/Caddyfile). type Service — из values.service.caddy.type
+# (по умолчанию ClusterIP; для реального внешнего доступа — LoadBalancer,
+# NodePort, либо ClusterIP + ingress.enabled=true, см. ingress.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: caddy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "caddy") | nindent 4 }}
+  {{- with .Values.service.caddy.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.caddy.type }}
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "caddy") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      {{- if and (eq .Values.service.caddy.type "NodePort") .Values.service.caddy.nodePorts.http }}
+      nodePort: {{ .Values.service.caddy.nodePorts.http }}
+      {{- end }}
+    - name: https
+      port: 8443
+      targetPort: https
+      {{- if and (eq .Values.service.caddy.type "NodePort") .Values.service.caddy.nodePorts.https }}
+      nodePort: {{ .Values.service.caddy.nodePorts.https }}
+      {{- end }}
+    # Presigned PUT/GET к SeaweedFS напрямую из браузера клиента — тот же
+    # смысл, что S3_PROXY_PORT в backend/docker-compose.yml (раздел 9):
+    # подпись SigV4 считается по полному пути, поэтому это отдельный порт,
+    # а не префикс на :8080/:8443 (см. комментарий в files/Caddyfile).
+    - name: s3-proxy
+      port: 8333
+      targetPort: s3-proxy
+      {{- if and (eq .Values.service.caddy.type "NodePort") .Values.service.caddy.nodePorts.s3 }}
+      nodePort: {{ .Values.service.caddy.nodePorts.s3 }}
+      {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: caddy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "caddy") | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.caddy }}
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "caddy") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "caddy") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/Caddyfile" | sha256sum }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      # backend/docker-compose.yml: depends_on [api, keycloak] БЕЗ условия —
+      # то есть просто "после запуска контейнера", а не "после healthy". Это
+      # самая слабая форма зависимости compose, поэтому здесь сознательно
+      # без initContainers: reverse_proxy на api/keycloak у Caddy и так
+      # переживает временную недоступность апстрима (повторные попытки на
+      # каждый запрос), а K8s Service всё равно не даст маршрут, пока под
+      # api/keycloak не станет Ready — то же самое ограничение по факту,
+      # без явного ожидания на старте.
+      containers:
+        - name: caddy
+          image: "{{ include "rtk-crm.externalImage" .Values.images.caddy }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # Ни command, ни args не заданы — как и в backend/docker-compose.yml,
+          # используется дефолтный CMD образа caddy (`caddy run --config
+          # /etc/caddy/Caddyfile`).
+          env:
+            - name: S3_ORIGIN
+              value: {{ .Values.env.s3PublicEndpointURL | quote }}
+            - name: WEB_UPSTREAM
+              value: {{ .Values.env.webUpstream | quote }}
+            - name: CSP_SCRIPT_SRC
+              value: {{ .Values.env.cspScriptSrc | quote }}
+            - name: CRM_TLS_HOST
+              value: {{ .Values.env.crmTlsHost | quote }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: https
+              containerPort: 8443
+            - name: s3-proxy
+              containerPort: 8333
+          volumeMounts:
+            - name: caddy-config
+              mountPath: /etc/caddy/Caddyfile
+              subPath: Caddyfile
+              readOnly: true
+            - name: caddy-data
+              mountPath: /data
+            - name: caddy-config-dir
+              mountPath: /config
+          # 1:1 перенос healthcheck caddy из backend/docker-compose.yml:
+          # проверяем через себя же — подтверждает и конфиг Caddy, и
+          # доступность api вверх по цепочке. Admin API выключен (admin
+          # off в Caddyfile), проверять там нечего.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 20
+          resources:
+            {{- toYaml .Values.resources.caddy | nindent 12 }}
+      volumes:
+        - name: caddy-config
+          configMap:
+            name: caddy-config
+        # caddy_data/caddy_config в backend/docker-compose.yml — именованные
+        # volume'ы (хранят сертификат `tls internal` между рестартами
+        # контейнера). Здесь caddy — Deployment (не StatefulSet, без PVC —
+        # так задано структурой чарта: постоянное хранилище только у
+        # postgres/redis/seaweedfs), поэтому emptyDir: самоподписанный
+        # сертификат просто перевыпускается заново при пересоздании пода —
+        # приемлемо для demo-масштаба однорепличного Caddy.
+        - name: caddy-data
+          emptyDir: {}
+        - name: caddy-config-dir
+          emptyDir: {}

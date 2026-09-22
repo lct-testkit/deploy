@@ -1,0 +1,124 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "keycloak") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    # Management-порт (health/metrics, KC_HEALTH_ENABLED/KC_METRICS_ENABLED).
+    # Наружу через Caddy не проксируется (см. Caddyfile — только /auth/*),
+    # но полезен для отладки: kubectl port-forward svc/keycloak 9000:9000.
+    - name: management
+      port: 9000
+      targetPort: management
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keycloak
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.keycloak }}
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "keycloak") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/realm-crm.json" | sha256sum }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      # depends_on postgres: condition: service_healthy в backend/docker-compose.yml.
+      initContainers:
+        {{- include "rtk-crm.waitForPostgres" . | nindent 8 }}
+      containers:
+        - name: keycloak
+          image: "{{ include "rtk-crm.externalImage" .Values.images.keycloak }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # args, НЕ command — переопределяет только CMD образа keycloak
+          # (kc.sh как ENTRYPOINT остаётся), как и в backend/docker-compose.yml.
+          args:
+            - start
+            - --import-realm
+          env:
+            - name: KC_BOOTSTRAP_ADMIN_USERNAME
+              value: {{ .Values.env.keycloakAdmin | quote }}
+            - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: keycloak-admin-password } }
+            - name: KC_DB
+              value: postgres
+            - name: KC_DB_URL
+              value: jdbc:postgresql://postgres:5432/keycloak
+            - name: KC_DB_USERNAME
+              value: {{ .Values.env.postgresUser | quote }}
+            - name: KC_DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: postgres-password } }
+            - name: KC_HTTP_ENABLED
+              value: "true"
+            # Keycloak живёт под /auth, чтобы весь контур был на одном порту Caddy.
+            - name: KC_HTTP_RELATIVE_PATH
+              value: /auth
+            - name: KC_HOSTNAME_URL
+              value: {{ .Values.env.keycloakPublicURL | quote }}
+            - name: KC_HOSTNAME_STRICT
+              value: "false"
+            - name: KC_HOSTNAME_STRICT_HTTPS
+              value: "false"
+            - name: KC_PROXY_HEADERS
+              value: xforwarded
+            - name: KC_HEALTH_ENABLED
+              value: "true"
+            - name: KC_METRICS_ENABLED
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: management
+              containerPort: 9000
+          volumeMounts:
+            - name: keycloak-realm
+              mountPath: /opt/keycloak/data/import
+              readOnly: true
+          # Точный перенос healthcheck сервиса keycloak из
+          # backend/docker-compose.yml: в образе нет ни curl, ни wget,
+          # поэтому тот же приём через /dev/tcp. KC_HEALTH_ENABLED поднимает
+          # health на management-порту 9000, KC_HTTP_RELATIVE_PATH действует
+          # и там: путь именно /auth/health/ready.
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 20
+            initialDelaySeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 20
+            initialDelaySeconds: 30
+          resources:
+            {{- toYaml .Values.resources.keycloak | nindent 12 }}
+      volumes:
+        - name: keycloak-realm
+          configMap:
+            name: keycloak-realm

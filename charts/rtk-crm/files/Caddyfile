@@ -1,0 +1,90 @@
+# Единая точка входа контура (K8s-версия). Идентична backend/deploy/Caddyfile
+# (и ../../compose/Caddyfile — копии друг друга), с ОДНИМ отличием: апстрим
+# `api` статический, без блока `dynamic a` — см. комментарий у @backend ниже.
+#
+# Caddy отвечает за TLS-терминацию и генерирует X-Request-Id, если клиент его
+# не передал. Дальше этот идентификатор проходит через логи, аудит и тело
+# ошибок Problem Details.
+#
+# HTTP-сайт слушает без имени хоста (catch-all), поэтому TLS-сайт обязан
+# иметь имя: два безымянных блока с разными политиками TLS конфликтуют.
+# Имя берётся из CRM_TLS_HOST, по умолчанию localhost.
+
+{
+	admin off
+	auto_https disable_redirects
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(common_headers) {
+	header {
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: {$S3_ORIGIN}; connect-src 'self' {$S3_ORIGIN}; style-src 'self' 'unsafe-inline'; script-src {$CSP_SCRIPT_SRC:'self'}; worker-src 'self' blob:; object-src 'self' blob:; frame-src 'self' blob: {$S3_ORIGIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+}
+
+(crm_routes) {
+	import common_headers
+
+	@no_request_id not header X-Request-Id *
+	request_header @no_request_id X-Request-Id {http.request.uuid}
+
+	log {
+		output stdout
+		format json
+	}
+
+	handle /auth/* {
+		reverse_proxy keycloak:8080
+	}
+
+	handle /metrics {
+		respond "Not Found" 404
+	}
+
+	# API, публичные ручки подписания/проверки, health и статика Swagger UI — в FastAPI.
+	@backend path /api/* /public/* /health/* /static/*
+	handle @backend {
+		# ЕДИНСТВЕННОЕ отличие от backend/deploy/Caddyfile: там апстрим — блок
+		# `dynamic a { name api; port 8000; refresh 10s }` + `lb_policy
+		# least_conn` (Caddy сам резолвит DNS docker-сети на все A-записи
+		# `api` и балансирует между ними — нужно для `docker compose --scale
+		# api=N` без перезапуска Caddy). В Kubernetes Service `api` УЖЕ сам
+		# балансирует между всеми Pod'ами-репликами api через ClusterIP
+		# (kube-proxy/iptables или IPVS) — это единственный стабильный VIP,
+		# а не набор A-записей на каждый под, поэтому `dynamic a` здесь не
+		# просто избыточен, а плохо соответствует модели K8s Service.
+		# Поэтому здесь — обычный статический апстрим на Service `api`.
+		reverse_proxy api:8000 {
+			header_up X-Real-IP {remote_host}
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+}
+
+:8080 {
+	import crm_routes
+}
+
+{$CRM_TLS_HOST:localhost}:8443 {
+	tls internal
+	import crm_routes
+}
+
+:8333 {
+	reverse_proxy seaweedfs:8333
+}

@@ -1,0 +1,120 @@
+# postgres — единственный инстанс с двумя логическими базами (crm,
+# keycloak), как в backend/docker-compose.yml (раздел 3.3/12.2). НЕ
+# кластер, поэтому реплики намеренно не вынесены в values.yaml (в отличие
+# от Deployment-сервисов) — размножение этого StatefulSet просто создало бы
+# несколько независимых, расходящихся баз, а не HA-кластер.
+#
+# Headless Service (clusterIP: None): у StatefulSet ровно 1 реплика, поэтому
+# он даёт то же самое, что нужно остальным подам — резолвинг имени
+# "postgres" в единственный живой (готовый) под, без отдельного ClusterIP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "postgres") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "postgres") | nindent 4 }}
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "postgres") | nindent 4 }}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "postgres") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "postgres") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/init-keycloak-db.sh" | sha256sum }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: postgres
+          image: "{{ include "rtk-crm.externalImage" .Values.images.postgres }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # args, НЕ command: compose здесь тоже лишь переопределяет CMD
+          # (аргументы к docker-entrypoint.sh образа postgres), а не
+          # ENTRYPOINT — тот самый entrypoint.sh делает initdb/применяет
+          # /docker-entrypoint-initdb.d/*, и его нельзя обойти.
+          args:
+            - postgres
+            - -c
+            - max_connections=200
+            - -c
+            - shared_buffers=256MB
+            - -c
+            - work_mem=16MB
+            - -c
+            - log_min_duration_statement=500
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.env.postgresUser | quote }}
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: postgres-password } }
+            - name: POSTGRES_DB
+              value: {{ .Values.env.postgresDb | quote }}
+            # Нужна для корректной сортировки русских названий (1:1 с backend/docker-compose.yml).
+            - name: LANG
+              value: ru_RU.utf8
+          ports:
+            - name: postgres
+              containerPort: 5432
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+            - name: postgres-init
+              mountPath: /docker-entrypoint-initdb.d/10-keycloak.sh
+              subPath: 10-keycloak.sh
+              readOnly: true
+          livenessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.env.postgresUser }} -d {{ .Values.env.postgresDb }}"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.env.postgresUser }} -d {{ .Values.env.postgresDb }}"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.resources.postgres | nindent 12 }}
+      volumes:
+        - name: postgres-init
+          configMap:
+            name: postgres-init
+            # Executable-бит: иначе docker-entrypoint.sh образа postgres
+            # SOURCE'ит скрипт вместо того, чтобы его ЗАПУСТИТЬ (см.
+            # комментарий в configmap-postgres-init.yaml) — тем же файлом,
+            # что и в backend/deploy/postgres/init-keycloak-db.sh (там он
+            # тоже -rwxr-xr-x на диске).
+            defaultMode: 0755
+  volumeClaimTemplates:
+    - metadata:
+        name: postgres-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.postgres.accessModes | nindent 10 }}
+        {{- if .Values.persistence.postgres.storageClassName }}
+        storageClassName: {{ .Values.persistence.postgres.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.postgres.size }}

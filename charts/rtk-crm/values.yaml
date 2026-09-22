@@ -1,0 +1,225 @@
+# Дефолтные значения rtk-crm. Namespace НЕ задаётся здесь — чарт всегда
+# использует .Release.Namespace (helm install -n <ns> ...), как и положено
+# по стандартной практике Helm.
+#
+# Имена K8s Service ЗАФИКСИРОВАНЫ и равны именам сервисов
+# backend/docker-compose.yml (postgres, redis, seaweedfs, keycloak, api,
+# caddy, web, sms-gateway-mock) — от них зависят как переменные окружения
+# ниже (S3_ENDPOINT_URL=http://seaweedfs:8333 и т.п.), так и Caddyfile в
+# configmap-caddy.yaml. Поэтому у объектов этого чарта НЕТ обычного для
+# Helm Release-префикса в имени — иначе DNS-имена пришлось бы переписывать
+# в двух местах и они бы разошлись при повторном использовании чарта.
+
+images:
+  # ghcr.io/lct-testkit — общий registry+project для api/web (см. ../../images.yaml).
+  registry: ghcr.io/lct-testkit
+  pullPolicy: IfNotPresent
+  # Если ghcr.io/lct-testkit приватный — укажите имя Secret'а типа
+  # kubernetes.io/dockerconfigjson здесь (создаётся вне чарта).
+  pullSecrets: []
+
+  # Свои образы — только тег, без digest (CI публикует новые теги на каждый релиз).
+  api:
+    repository: api   # -> ghcr.io/lct-testkit/api ; используют api/worker/migrate/seed/sms-gateway-mock
+    tag: latest
+  web:
+    repository: web   # -> ghcr.io/lct-testkit/web
+    tag: latest
+
+  # Внешние образы — пин по digest из ../../images.yaml (не только тег,
+  # чтобы попасть гарантированно в тот же образ, что зафиксирован в
+  # офлайн-бандле). tag указан только для читаемости rendered-манифеста.
+  postgres:
+    repository: docker.io/library/postgres
+    tag: 16-alpine
+    digest: "sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb"
+  redis:
+    repository: docker.io/library/redis
+    tag: 7-alpine
+    digest: "sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7"
+  seaweedfs:
+    repository: docker.io/chrislusf/seaweedfs
+    tag: "3.68"
+    digest: "sha256:172f7f002fb5fb2c1fbfcb702c6c9d3482d7cbb49e913fe8d1b0331f82957cf5"
+  keycloak:
+    repository: quay.io/keycloak/keycloak
+    tag: "25.0"
+    digest: "sha256:82c5b7a110456dbd42b86ea572e728878549954cc8bd03cd65410d75328095d2"
+  caddy:
+    repository: docker.io/library/caddy
+    tag: 2.8-alpine
+    digest: "sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17"
+  ntp:
+    repository: docker.io/cturra/ntp
+    tag: latest
+    digest: "sha256:7224d4e7c7833aabbcb7dd70c46c8a8dcccda365314c6db047b9b10403ace3bc"
+
+# Реплики. Только api/worker осмысленно масштабировать (stateless, за
+# Service с ClusterIP/least_conn-подобной балансировкой kube-proxy).
+# Остальное — по одному, как в исходной топологии docker-compose.
+replicas:
+  api: 1
+  worker: 1
+  keycloak: 1
+  caddy: 1
+  web: 1
+  smsGatewayMock: 1
+  ntp: 1
+
+# requests/limits — малые дефолты демо-масштаба (НЕ рассчитаны на целевые
+# 50 одновременных пользователей кейса), всё переопределяемо через --set
+# или свой values-prod.yaml.
+resources:
+  postgres:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  redis:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  seaweedfs:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  keycloak:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  api:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  worker:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  caddy:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+  web:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { cpu: 200m, memory: 128Mi }
+  smsGatewayMock:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 100m, memory: 128Mi }
+  ntp:
+    requests: { cpu: 10m, memory: 16Mi }
+    limits: { cpu: 100m, memory: 32Mi }
+  migrate:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  seed:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+persistence:
+  postgres:
+    size: 5Gi
+    storageClassName: ""   # "" = StorageClass кластера по умолчанию
+    accessModes: ["ReadWriteOnce"]
+  redis:
+    size: 1Gi
+    storageClassName: ""
+    accessModes: ["ReadWriteOnce"]
+  seaweedfs:
+    size: 10Gi
+    storageClassName: ""
+    accessModes: ["ReadWriteOnce"]
+
+# pre-install/pre-upgrade hook Job'ы (migrate, seed).
+jobs:
+  backoffLimit: 2
+  activeDeadlineSeconds: 600
+
+# Caddy — единая точка входа контура (аналог сервиса `caddy` в
+# docker-compose): слушает :8080 (HTTP), :8443 (HTTPS, tls internal),
+# :8333 (presigned S3 прокси на seaweedfs). По умолчанию ClusterIP —
+# для реального внешнего доступа переключите на LoadBalancer/NodePort
+# или включите ingress.enabled и оставьте type=ClusterIP.
+service:
+  caddy:
+    type: ClusterIP
+    # Доп. аннотации для Service (например, для облачного LoadBalancer).
+    annotations: {}
+    nodePorts:
+      http: null
+      https: null
+      s3: null
+
+# Ingress — ВЫКЛЮЧЕН по умолчанию (по умолчанию наружу смотрит сам Service
+# caddy, как и требует топология docker-compose, где Caddy — это уже
+# единственная точка входа со своей TLS-терминацией). Включайте только если
+# перед Caddy нужен именно нативный ingress-контроллер кластера.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: crm.example.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  # - secretName: rtk-crm-tls
+  #   hosts: [crm.example.local]
+
+# Некритичные (не-секретные) переменные окружения — те же имена и дефолты,
+# что x-api-env в backend/docker-compose.yml / backend/.env.example.
+# Секретные значения (пароли, ключи) — отдельно в блоке secrets ниже.
+env:
+  appProfile: demo
+  logLevel: INFO
+  logJson: "true"
+
+  postgresUser: crm
+  postgresDb: crm
+
+  # Публичные адреса. localhost по умолчанию (как в backend/.env.example) —
+  # на реальном сервере/кластере ОБЯЗАТЕЛЬНО замените на настоящий
+  # домен/IP входа (иначе issuer токенов и presigned-ссылки будут указывать
+  # на localhost браузера пользователя, а не на сервер).
+  baseURL: http://localhost:8080
+  keycloakPublicURL: http://localhost:8080/auth
+  s3PublicEndpointURL: http://localhost:8333
+
+  keycloakRealm: crm
+  keycloakClientId: crm-bff
+  keycloakAdminClientId: crm-admin
+  keycloakAdmin: admin
+  keycloakVerifyAudience: "true"
+
+  uvicornWorkers: "1"
+
+  appMode: demo
+  cspScriptSrc: "'self'"
+  # Имя TLS-сайта в Caddyfile (SNI сертификата `tls internal`).
+  crmTlsHost: localhost
+  # Куда Caddy отдаёт всё, что не /api, /public, /health, /static и не /auth.
+  # Дефолт — K8s Service web:3000. Переопределять на host.docker.internal
+  # (как делает backend/.env.example для локальной разработки с Vite) в
+  # кластере смысла не имеет — извне кластера такой хост не резолвится.
+  webUpstream: "web:3000"
+
+  # *_REF — имя переменной, где реально лежит секрет (раздел 7.8 спецификации
+  # backend), не значение. Дефолты — пустые/выключенные, как в
+  # x-api-env backend/docker-compose.yml (`${VAR:-}`).
+  cmsWebhookSecretRef: ""
+  cmsWebhookSecret: ""
+  lmsBaseURL: ""
+  lmsAuthRef: ""
+  bitrixConnectorEnabled: "false"
+  bitrixWebhookUrlRef: ""
+  bitrixWebhookUrl: ""
+  integrationWebhookRateLimitPerMin: "60"
+
+# Секреты — шаблонизируются в Kubernetes Secret (см. templates/secret.yaml),
+# НЕ зашиты напрямую в Deployment/Job. Значения по умолчанию — те же
+# демо-дефолты, что в backend/.env.example (нужны, чтобы demo-seed и
+# realm-crm.json совпадали "из коробки"). Каждое значение помечено ниже —
+# ОБЯЗАТЕЛЬНО переопределите все восемь перед любым реальным развёртыванием
+# (--set secrets.xxx=... или свой values-prod.yaml), как и
+# backend/.env.example предупреждает про соответствующие переменные.
+secrets:
+  postgresPassword: "crm"                    # CHANGE ME for any real deployment
+  crmAppPassword: "crm_app"                  # CHANGE ME for any real deployment
+  keycloakAdminPassword: "admin"             # CHANGE ME for any real deployment
+  keycloakClientSecret: "crm-bff-secret"     # CHANGE ME for any real deployment
+  keycloakAdminClientSecret: "crm-admin-secret"  # CHANGE ME for any real deployment
+  signatureServerSecret: "change-me-in-prod" # CHANGE ME for any real deployment
+  s3AccessKey: "crm_access"                  # CHANGE ME for any real deployment
+  s3SecretKey: "crm_secret_key"              # CHANGE ME for any real deployment

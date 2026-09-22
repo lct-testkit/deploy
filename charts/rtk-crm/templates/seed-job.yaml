@@ -1,0 +1,42 @@
+# seed — идемпотентные демо-данные (воронки b2b_university_v1/
+# b2c_individual_v1, шаблоны отчётов/уведомлений, источники интеграций +
+# учётка INTEGRATION — раздел 7). backend/docker-compose.yml: depends_on
+# migrate:service_completed_successfully. Тут это вес "2" (после migrate,
+# вес "1" — см. комментарий в migrate-job.yaml про порядок хуков).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "seed") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.jobs.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.jobs.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "seed") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: Never
+      # migrate уже гарантированно отработал (вес хука меньше), но postgres
+      # мог в теории быть недоступен на момент повторного helm upgrade —
+      # тот же initContainer, что у migrate, для устойчивости.
+      initContainers:
+        {{- include "rtk-crm.waitForPostgres" . | nindent 8 }}
+      containers:
+        - name: seed
+          image: "{{ include "rtk-crm.apiImage" . }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["seed"]
+          env:
+            {{- include "rtk-crm.apiEnv" . | nindent 12 }}
+            - name: WAIT_FOR_POSTGRES
+              value: postgres:5432
+          resources:
+            {{- toYaml .Values.resources.seed | nindent 12 }}

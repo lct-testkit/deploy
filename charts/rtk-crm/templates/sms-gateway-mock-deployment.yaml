@@ -1,0 +1,70 @@
+# sms-gateway-mock — мок внешнего SMS-провайдера для доставки OTP (dop.md
+# §10.11/§13), тот же образ, что api/worker, отдельная команда. Service
+# нужен: SMS_GATEWAY_URL=http://sms-gateway-mock:8090 читают api/worker/
+# migrate/seed (whitelist x-api-env, см. _helpers.tpl).
+apiVersion: v1
+kind: Service
+metadata:
+  name: sms-gateway-mock
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "sms-gateway-mock") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "sms-gateway-mock") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sms-gateway-mock
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "sms-gateway-mock") | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.smsGatewayMock }}
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "sms-gateway-mock") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "sms-gateway-mock") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: sms-gateway-mock
+          image: "{{ include "rtk-crm.apiImage" . }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["sms-gateway-mock"]
+          # НЕТ блока environment: в backend/docker-compose.yml у сервиса
+          # sms-gateway-mock тоже нет `environment: {<<: *api-env}` — он
+          # получает только то, что уже зашито в образ (см. Dockerfile).
+          ports:
+            - name: http
+              containerPort: 8090
+          # compose-healthcheck — `python -c "urllib.request... status==200"`,
+          # то есть по сути обычная HTTP-проверка /health/live без разбора
+          # тела — переносим как httpGet-пробу (тот же путь, тот же порт).
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 10
+          resources:
+            {{- toYaml .Values.resources.smsGatewayMock | nindent 12 }}

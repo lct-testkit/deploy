@@ -1,0 +1,13 @@
+# Caddyfile для Pod'а caddy — K8s-адаптированная версия backend/deploy/Caddyfile
+# (см. files/Caddyfile и комментарий там же про единственное отличие:
+# статический reverse_proxy api:8000 вместо блока `dynamic a`).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: caddy-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "caddy") | nindent 4 }}
+data:
+  Caddyfile: |-
+{{ .Files.Get "files/Caddyfile" | indent 4 }}

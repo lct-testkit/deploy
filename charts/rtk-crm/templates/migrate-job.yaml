@@ -1,0 +1,53 @@
+# migrate — `alembic upgrade head`, разово, до старта api/worker (backend/
+# docker-compose.yml: depends_on postgres:service_healthy, а api/worker/seed
+# в свою очередь ждут migrate/seed через service_completed_successfully).
+#
+# В Helm это выражено pre-install/pre-upgrade hook'ами с весами: migrate
+# (вес "1") запускается и должен успешно завершиться РАНЬШЕ seed (вес "2",
+# см. seed-job.yaml) — Helm выполняет hook'и одного события по возрастанию
+# веса и ждёт завершения каждого перед следующим. Обычные (не-hook)
+# ресурсы чарта — api/worker/... — применяются ПОСЛЕ того, как все
+# pre-install/pre-upgrade hook'и успешно завершились, поэтому "api ждёт
+# seed" из compose выполняется автоматически порядком выполнения хуков,
+# без отдельного initContainer'а (см. api-deployment.yaml).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "migrate") | nindent 4 }}
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.jobs.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.jobs.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "migrate") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      restartPolicy: Never
+      initContainers:
+        {{- include "rtk-crm.waitForPostgres" . | nindent 8 }}
+      containers:
+        - name: migrate
+          image: "{{ include "rtk-crm.apiImage" . }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["migrate"]
+          env:
+            {{- include "rtk-crm.apiEnv" . | nindent 12 }}
+            # DDL (CREATE ROLE/TABLE/FUNCTION, GRANT) требует суперпользователя
+            # — crm_app сознательно лишена этих прав той же миграцией, которая
+            # её заводит (см. комментарий у migrate в backend/docker-compose.yml).
+            # Позже в списке env => переопределяет DATABASE_URL из apiEnv выше
+            # (K8s берёт последнее вхождение переменной с одним именем).
+            - name: DATABASE_URL
+              value: postgresql+asyncpg://{{ .Values.env.postgresUser }}:$(POSTGRES_PASSWORD)@postgres:5432/{{ .Values.env.postgresDb }}
+            - name: WAIT_FOR_POSTGRES
+              value: postgres:5432
+          resources:
+            {{- toYaml .Values.resources.migrate | nindent 12 }}

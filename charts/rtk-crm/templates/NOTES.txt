@@ -1,0 +1,94 @@
+RTK School CRM ({{ .Chart.Name }} {{ .Chart.AppVersion }}) установлен в namespace "{{ .Release.Namespace }}" (релиз "{{ .Release.Name }}").
+
+1) Миграции и демо-данные
+   migrate и seed выполняются как pre-install/pre-upgrade hook'и (Job'ы,
+   вес "1" и "2" — сначала migrate, затем seed, строго по очереди) ДО
+   применения остальных ресурсов. Helm дожидается их успешного завершения
+   перед тем, как продолжить установку — так же, как compose ждёт
+   `service_completed_successfully` у migrate/seed. Посмотреть их прямо во
+   время установки (после этого, по политике hook-succeeded, Job
+   удаляется):
+
+     kubectl get jobs -n {{ .Release.Namespace }} -w
+     kubectl logs -n {{ .Release.Namespace }} job/migrate
+     kubectl logs -n {{ .Release.Namespace }} job/seed
+
+2) Статус раскладки
+
+     kubectl get pods -n {{ .Release.Namespace }} -w
+     kubectl rollout status deployment/api -n {{ .Release.Namespace }}
+     kubectl rollout status deployment/caddy -n {{ .Release.Namespace }}
+
+3) Как достучаться до приложения
+   Единая точка входа — Service "caddy" (тип: {{ .Values.service.caddy.type }}), как и в backend/docker-compose.yml.
+{{- if eq .Values.service.caddy.type "ClusterIP" }}
+
+   Сейчас это ClusterIP (только внутри кластера). Быстрее всего — port-forward:
+
+     kubectl port-forward -n {{ .Release.Namespace }} svc/caddy 8080:8080 8443:8443 8333:8333
+
+   Затем открыть http://localhost:8080 (или https://localhost:8443 —
+   самоподписанный сертификат `tls internal`, браузер спросит подтверждение).
+   Для постоянного внешнего доступа переключите service.caddy.type на
+   LoadBalancer/NodePort, либо включите ingress.enabled и заведите перед
+   Caddy ingress-контроллер кластера (см. values.yaml, ingress.*).
+{{- else if eq .Values.service.caddy.type "LoadBalancer" }}
+
+     kubectl get svc caddy -n {{ .Release.Namespace }} -w
+
+   Дождитесь внешнего IP/hostname в колонке EXTERNAL-IP, затем откройте
+   http://<EXTERNAL-IP>:8080 (или https://<EXTERNAL-IP>:8443).
+{{- else }}
+
+   NodePort — откройте http://<адрес-любой-ноды>:<nodePort HTTP>. Узнать порты:
+
+     kubectl get svc caddy -n {{ .Release.Namespace }} -o jsonpath='{.spec.ports}'
+{{- end }}
+{{- if .Values.ingress.enabled }}
+
+   ingress.enabled=true — также заведён Ingress "caddy":
+{{- range .Values.ingress.hosts }}
+     http://{{ .host }}
+{{- end }}
+{{- end }}
+
+4) Вход
+   Realm Keycloak "{{ .Values.env.keycloakRealm }}" импортируется из
+   ConfigMap keycloak-realm при первом старте пода keycloak
+   (`start --import-realm`, как в backend/docker-compose.yml). Демо-учётки —
+   те же, что в backend/deploy/keycloak/realm-crm.json.
+
+5) Единственное отличие Caddyfile от backend/deploy/Caddyfile
+   Апстрим на api статический (`reverse_proxy api:8000`) вместо блока
+   `dynamic a { name api; port 8000; refresh 10s } / lb_policy least_conn`.
+   Причина: `dynamic a` резолвит DNS docker-сети на все A-записи api для
+   ручной балансировки — нужно для `docker compose --scale api=N`. В
+   Kubernetes Service "api" уже сам балансирует между всеми Pod'ами-репликами
+   через ClusterIP (kube-proxy/IPVS) — стабильный VIP, а не набор A-записей
+   на каждый под, поэтому `dynamic a` тут не просто избыточен, а плохо
+   соответствует модели Service. Подробный комментарий — прямо в
+   files/Caddyfile над этим блоком. Масштабируется реплика api как обычно:
+
+     kubectl scale deployment/api -n {{ .Release.Namespace }} --replicas=3
+
+6) Секреты
+   Пароли/ключи (Secret "rtk-crm-secrets") по умолчанию — те же демо-значения,
+   что в backend/.env.example (нужны, чтобы demo-seed и realm-crm.json
+   совпадали "из коробки"). Для любого реального развёртывания
+   ОБЯЗАТЕЛЬНО переопределите весь блок secrets.* в values.yaml (--set или
+   свой values-prod.yaml) — каждое значение там помечено "CHANGE ME".
+
+7) Логи
+   kubelet сам ротирует логи контейнеров (в отличие от локального
+   json-file-драйвера Docker в backend/docker-compose.yml, здесь отдельно
+   настраивать ротацию не нужно) — используйте `kubectl logs` или агрегатор
+   логов кластера.
+
+{{- if .Values.images.pullSecrets | not }}
+
+8) Приватный ghcr.io/lct-testkit
+   Если ghcr.io/lct-testkit приватный, задайте images.pullSecrets в
+   values.yaml (имя Secret'а типа kubernetes.io/dockerconfigjson,
+   создаётся отдельно от этого чарта) — иначе Pod'ы api/web не смогут
+   вытянуть образ.
+{{- end }}

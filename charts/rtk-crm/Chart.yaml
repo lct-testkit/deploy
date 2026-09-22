@@ -1,0 +1,24 @@
+apiVersion: v2
+name: rtk-crm
+description: >-
+  RTK School CRM — production-style Helm-чарт. Разворачивает в Kubernetes тот
+  же состав сервисов и ту же топологию, что backend/docker-compose.yml
+  (PostgreSQL 16, Redis 7, SeaweedFS, Keycloak 25, Caddy, FastAPI + arq), но
+  образы api/web тянутся готовыми из ghcr.io/lct-testkit/* вместо локальной
+  сборки — см. ../../images.yaml.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - crm
+  - fastapi
+  - sveltekit
+  - keycloak
+  - postgresql
+home: https://github.com/lct-testkit
+sources:
+  - https://github.com/lct-testkit/backend
+  - https://github.com/lct-testkit/frontend
+  - https://github.com/lct-testkit/deploy
+maintainers:
+  - name: RTK School CRM

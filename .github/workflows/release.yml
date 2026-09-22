@@ -1,0 +1,61 @@
+name: release
+
+# Офлайн-поставка (rtk_requiriments.md — сервис рассчитан на закрытый
+# контур): на теге vX.Y.Z собирает bundle_offline_bundle.sh (все образы из
+# images.yaml одним архивом + compose-профиль + install.sh) и публикует его
+# файлом релиза на GitHub — ссылка из требования 10.3 «прототип для
+# проверки» может указывать либо на живой демо-стенд, либо на этот архив для
+# офлайн-проверки без доступа к GHCR.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия бандла (по умолчанию — сам тег/short sha)"
+        required: false
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  offline-bundle:
+    name: офлайн-бандл
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: pip install pyyaml
+
+      - name: Манифест образов должен быть полным (нет пустых tag/digest)
+        run: python scripts/validate_images.py images.yaml
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Версия
+        id: version
+        run: |
+          v="${{ github.event.inputs.version }}"
+          if [ -z "$v" ]; then v="${GITHUB_REF_NAME:-$(git rev-parse --short=7 HEAD)}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Собрать бандл
+        run: bash scripts/build_offline_bundle.sh "${{ steps.version.outputs.version }}"
+
+      - name: Опубликовать релиз
+        uses: softprops/action-gh-release@v2
+        with:
+          files: rtk-crm-offline-*.tar.gz
+          generate_release_notes: true
+          body: |
+            Офлайн-поставка RTK School CRM (${{ steps.version.outputs.version }}).
+
+            Установка на машине без доступа в интернет:
+            1. Установите Docker + плагин `docker compose` (требует интернет — единственный шаг, который его требует).
+            2. Скачайте и распакуйте архив, `bash install.sh`.
+            3. Подробности и чек-лист секретов перед боевой эксплуатацией — `RUNBOOK.md` в этом репозитории.

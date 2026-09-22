@@ -1,0 +1,10 @@
+# Стандартный список для Helm-чартов.
+.git/
+.gitignore
+.vscode/
+*.swp
+*.bak
+*.tmp
+*.orig
+OWNERS
+.DS_Store

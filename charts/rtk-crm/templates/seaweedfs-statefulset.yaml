@@ -1,0 +1,107 @@
+# seaweedfs — единственный инстанс (S3-совместимое хранилище; спецификация
+# прямо запрещает замену на MinIO), как в backend/docker-compose.yml.
+# Реплики намеренно не в values.yaml — см. комментарий в
+# postgres-statefulset.yaml (тот же довод: не кластер).
+apiVersion: v1
+kind: Service
+metadata:
+  name: seaweedfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "seaweedfs") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "seaweedfs") | nindent 4 }}
+  ports:
+    - name: s3
+      port: 8333
+      targetPort: s3
+    - name: master
+      port: 9333
+      targetPort: master
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: seaweedfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "seaweedfs") | nindent 4 }}
+spec:
+  serviceName: seaweedfs
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "seaweedfs") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "seaweedfs") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/s3.json" | sha256sum }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: seaweedfs
+          image: "{{ include "rtk-crm.externalImage" .Values.images.seaweedfs }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # args, НЕ command — см. комментарий в postgres-statefulset.yaml.
+          args:
+            - server
+            - -dir=/data
+            - -master.volumeSizeLimitMB=1024
+            - -volume.max=100
+            - -s3
+            - -s3.port=8333
+            - -s3.config=/etc/seaweedfs/s3.json
+          ports:
+            - name: s3
+              containerPort: 8333
+            - name: master
+              containerPort: 9333
+          volumeMounts:
+            - name: seaweedfs-data
+              mountPath: /data
+            - name: seaweedfs-config
+              mountPath: /etc/seaweedfs/s3.json
+              subPath: s3.json
+              readOnly: true
+          livenessProbe:
+            # backend/docker-compose.yml бьёт в 127.0.0.1 изнутри того же
+            # контейнера (там это process-level exec). kubelet же выполняет
+            # httpGet-пробы СО СТОРОНЫ узла в IP пода — поэтому здесь БЕЗ
+            # `host:` (иначе проба ушла бы в loopback самого узла, а не
+            # пода, и всегда падала бы). SeaweedFS слушает master-порт на
+            # всех интерфейсах по умолчанию, IP пода этого достаточно.
+            httpGet:
+              path: /cluster/status
+              port: master
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /cluster/status
+              port: master
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.resources.seaweedfs | nindent 12 }}
+      volumes:
+        - name: seaweedfs-config
+          configMap:
+            name: seaweedfs-config
+  volumeClaimTemplates:
+    - metadata:
+        name: seaweedfs-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.seaweedfs.accessModes | nindent 10 }}
+        {{- if .Values.persistence.seaweedfs.storageClassName }}
+        storageClassName: {{ .Values.persistence.seaweedfs.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.seaweedfs.size }}

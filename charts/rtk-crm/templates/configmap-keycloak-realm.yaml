@@ -1,0 +1,15 @@
+# realm-crm.json — realm-as-code импорт Keycloak, verbatim-копия
+# backend/deploy/keycloak/realm-crm.json (см. files/realm-crm.json).
+# Монтируется в Pod keycloak в /opt/keycloak/data/import (см.
+# keycloak-deployment.yaml), команда `start --import-realm` подхватывает
+# всё содержимое каталога при старте.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-realm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 4 }}
+data:
+  realm-crm.json: |-
+{{ .Files.Get "files/realm-crm.json" | indent 4 }}

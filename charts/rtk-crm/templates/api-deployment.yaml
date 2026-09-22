@@ -1,0 +1,85 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.api }}
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "api") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "api") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      # backend/docker-compose.yml: depends_on postgres/redis/keycloak
+      # (condition service_healthy) + seed (service_completed_successfully).
+      # seed переведён в pre-install/pre-upgrade hook ниже по весу — Helm
+      # гарантированно прогоняет и дожидается его ДО применения этого
+      # Deployment (см. migrate-job.yaml/seed-job.yaml, NOTES.txt), поэтому
+      # отдельный initContainer для него не нужен. postgres/redis/keycloak —
+      # обычные initContainers (переживают рестарт пода вне install/upgrade).
+      initContainers:
+        {{- include "rtk-crm.waitForPostgres" . | nindent 8 }}
+        {{- include "rtk-crm.waitForRedis" . | nindent 8 }}
+        {{- include "rtk-crm.waitForKeycloak" . | nindent 8 }}
+      containers:
+        - name: api
+          image: "{{ include "rtk-crm.apiImage" . }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["api"]
+          env:
+            {{- include "rtk-crm.apiEnv" . | nindent 12 }}
+            - name: WAIT_FOR_POSTGRES
+              value: postgres:5432
+            - name: WAIT_FOR_REDIS
+              value: redis:6379
+            - name: UVICORN_WORKERS
+              value: {{ .Values.env.uvicornWorkers | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+          # backend/docker-compose.yml НЕ задаёт healthcheck для api
+          # напрямую (полагается на healthcheck caddy как косвенный сигнал
+          # доступности api ниже по цепочке — см. комментарий там же). Но
+          # приложение реально отдаёт /health/live и /health/ready именно
+          # для liveness/readiness (app/api/health.py) — используем их
+          # напрямую, это точнее, чем не иметь проб вовсе.
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            initialDelaySeconds: 10
+          resources:
+            {{- toYaml .Values.resources.api | nindent 12 }}

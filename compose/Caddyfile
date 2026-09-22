@@ -1,0 +1,118 @@
+# Единая точка входа контура.
+#
+# Caddy отвечает за TLS-терминацию и генерирует X-Request-Id, если клиент его
+# не передал. Дальше этот идентификатор проходит через логи, аудит и тело
+# ошибок Problem Details.
+#
+# HTTP-сайт слушает без имени хоста (catch-all), поэтому TLS-сайт обязан
+# иметь имя: два безымянных блока с разными политиками TLS конфликтуют.
+# Имя берётся из CRM_TLS_HOST, по умолчанию localhost.
+
+{
+	admin off
+	# `off` (было раньше) выключает у Caddy весь TLS-automation слой целиком —
+	# включая выпуск сертификата самим `tls internal` на сайте :8443 ниже (тот
+	# идёт через тот же automation, просто с internal issuer вместо ACME).
+	# Результат бага: `cert_cache_fill:0`, рукопожатие на :8443 падало с TLS
+	# alert 80 «no certificate available for 'localhost'» — сайт ни разу не
+	# выпустил себе сертификат с момента создания стенда. `disable_redirects`
+	# убирает автоredirect :8080→:8443 (видимо ради этого и ставили `off`), но
+	# не блокирует выпуск сертификата для explicit `tls internal`.
+	auto_https disable_redirects
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+(common_headers) {
+	header {
+		# Веб-клиент (SPA) отдаётся с того же origin. Скрипты только со своего origin (сборка выносит
+		# bootstrap SvelteKit в /boot.js), presigned-ссылки SeaweedFS (загрузка, скачивание, PDF на
+		# странице подписания) живут на порту S3-прокси — им разрешены connect/img/frame.
+		# В локальной разработке с Vite (CSP_SCRIPT_SRC="'self' 'unsafe-inline' 'unsafe-eval'") политику
+		# ослабляют только для скриптов.
+		Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: {$S3_ORIGIN}; connect-src 'self' {$S3_ORIGIN}; style-src 'self' 'unsafe-inline'; script-src {$CSP_SCRIPT_SRC:'self'}; worker-src 'self' blob:; object-src 'self' blob:; frame-src 'self' blob: {$S3_ORIGIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "geolocation=(), microphone=(), camera=()"
+		-Server
+	}
+}
+
+(crm_routes) {
+	import common_headers
+
+	# Прокидываем идентификатор запроса или создаём новый.
+	@no_request_id not header X-Request-Id *
+	request_header @no_request_id X-Request-Id {http.request.uuid}
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Keycloak отдаётся под /auth, чтобы весь контур жил на одном порту.
+	# Именно handle, а не handle_path: Keycloak сам слушает на /auth
+	# (KC_HTTP_RELATIVE_PATH), поэтому префикс срезать нельзя.
+	handle /auth/* {
+		reverse_proxy keycloak:8080
+	}
+
+	# Метрики наружу не выставляются: их собирает Prometheus внутри сети.
+	handle /metrics {
+		respond "Not Found" 404
+	}
+
+	# API, публичные ручки подписания/проверки, health и статика Swagger UI (`/static/swagger/*`, `app/api/docs.py`,
+	# смонтирована на самом FastAPI-приложении абсолютным путём, не под `/api`) — в FastAPI.
+	@backend path /api/* /public/* /health/* /static/*
+	handle @backend {
+		reverse_proxy {
+			# Динамическое разрешение DNS вместо статического апстрима:
+			# `docker compose up --scale api=3` подхватывается без
+			# перезапуска Caddy. У api один воркер на контейнер, поэтому
+			# масштабирование идёт именно репликами.
+			dynamic a {
+				name api
+				port 8000
+				refresh 10s
+			}
+			lb_policy least_conn
+			header_up X-Real-IP {remote_host}
+			# Тяжёлые отчёты и импорты отвечают дольше дефолтных таймаутов.
+			transport http {
+				read_timeout 300s
+				write_timeout 300s
+			}
+		}
+	}
+
+	# Всё остальное — веб-клиент (статический SPA-образ `web`; в разработке WEB_UPSTREAM указывает на Vite).
+	handle {
+		reverse_proxy {$WEB_UPSTREAM:web:3000}
+	}
+}
+
+:8080 {
+	import crm_routes
+}
+
+{$CRM_TLS_HOST:localhost}:8443 {
+	# Самоподписанный сертификат: в закрытом контуре внешний CA недоступен.
+	tls internal
+	import crm_routes
+}
+
+# Presigned PUT/GET к SeaweedFS (раздел 9): API подписывает ссылки на этот
+# порт (S3_PUBLIC_ENDPOINT_URL), браузер клиента ходит сюда напрямую, минуя
+# API — иначе загрузка файла шла бы через воркер API, чего раздел 3.7 прямо
+# запрещает. Отдельный порт, а не префикс пути на :8080/:8443: подпись
+# SigV4 считается по полному пути запроса, и любой стрипинг префикса
+# прокси меняет подписанный путь и роняет проверку подписи на SeaweedFS —
+# префикс пути в принципе несовместим с presigned-URL так же, как был бы
+# несовместим с Keycloak, если бы у него не было собственного KC_HTTP_RELATIVE_PATH.
+:8333 {
+	reverse_proxy seaweedfs:8333
+}

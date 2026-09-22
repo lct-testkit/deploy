@@ -1,0 +1,331 @@
+# Прод-профиль RTK School CRM: тот же стек и топология, что
+# backend/docker-compose.yml, но образы api/web тянутся готовыми из
+# ghcr.io/lct-testkit/* (см. ../images.yaml), а не собираются локально.
+# Рассчитан на реальный сервер, а не на локальную разработку — подробнее
+# см. README.md рядом с этим файлом.
+#
+#   cp .env.example .env   # и обязательно смените секреты (см. комментарий вверху .env.example)
+#   docker compose up -d
+#   docker compose --profile web up -d   # чтобы поднять ещё и web (см. README.md)
+
+name: rtk-crm
+
+# Без ротации json-file-драйвер Docker копит логи на диске неограниченно
+# (особенно Caddy: строка JSON на каждый запрос). 10 МБ × 3 файла на
+# контейнер — этого хватает на просмотр недавней истории, не разрастаясь
+# без контроля. Идентично backend/docker-compose.yml.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+# Тот же whitelist переменных, что x-api-env в backend/docker-compose.yml —
+# скопирован без изменений. Именно этот список, а не .env целиком,
+# определяет, что реально долетает до контейнеров api/worker/migrate/seed.
+x-api-env: &api-env
+  APP_PROFILE: ${APP_PROFILE:-demo}
+  DATABASE_URL: postgresql+asyncpg://crm_app:${CRM_APP_PASSWORD:-crm_app}@postgres:5432/${POSTGRES_DB:-crm}
+  CRM_APP_PASSWORD: ${CRM_APP_PASSWORD:-crm_app}
+  KC_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-crm}@postgres:5432/keycloak
+  REDIS_URL: redis://redis:6379/0
+  BASE_URL: ${BASE_URL:-http://localhost:8080}
+  KEYCLOAK_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/auth}
+  KEYCLOAK_INTERNAL_URL: http://keycloak:8080/auth
+  KEYCLOAK_REALM: ${KEYCLOAK_REALM:-crm}
+  KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-crm-bff}
+  KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-crm-bff-secret}
+  KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID:-crm-admin}
+  KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET:-crm-admin-secret}
+  KEYCLOAK_VERIFY_AUDIENCE: ${KEYCLOAK_VERIFY_AUDIENCE:-true}
+  S3_ENDPOINT_URL: http://seaweedfs:8333
+  S3_PUBLIC_ENDPOINT_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:8333}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-crm_access}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-crm_secret_key}
+  SIGNATURE_SERVER_SECRET: ${SIGNATURE_SERVER_SECRET:-change-me-in-prod}
+  NTP_HOST: ntp
+  SMS_GATEWAY_URL: http://sms-gateway-mock:8090
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LOG_JSON: ${LOG_JSON:-true}
+  CMS_WEBHOOK_SECRET_REF: ${CMS_WEBHOOK_SECRET_REF:-}
+  LMS_BASE_URL: ${LMS_BASE_URL:-}
+  LMS_AUTH_REF: ${LMS_AUTH_REF:-}
+  BITRIX_CONNECTOR_ENABLED: ${BITRIX_CONNECTOR_ENABLED:-false}
+  BITRIX_WEBHOOK_URL_REF: ${BITRIX_WEBHOOK_URL_REF:-}
+  INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN: ${INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN:-60}
+  CMS_WEBHOOK_SECRET: ${CMS_WEBHOOK_SECRET:-}
+  BITRIX_WEBHOOK_URL: ${BITRIX_WEBHOOK_URL:-}
+
+services:
+  postgres:
+    # Пин по digest из ../images.yaml (не только тег — офлайн-бандл должен
+    # брать гарантированно тот же образ, что был проверен на стенде).
+    image: docker.io/library/postgres@sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-crm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-crm}
+      POSTGRES_DB: ${POSTGRES_DB:-crm}
+      LANG: ru_RU.utf8
+    command:
+      - postgres
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - work_mem=16MB
+      - -c
+      - log_min_duration_statement=500
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Источник — backend/deploy/postgres/init-keycloak-db.sh, скопирован
+      # verbatim в ./postgres/ (см. README.md этого каталога).
+      - ./postgres/init-keycloak-db.sh:/docker-entrypoint-initdb.d/10-keycloak.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+    networks: [crm]
+
+  redis:
+    image: docker.io/library/redis@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - 512mb
+      - --maxmemory-policy
+      - volatile-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+    networks: [crm]
+
+  seaweedfs:
+    image: docker.io/chrislusf/seaweedfs@sha256:172f7f002fb5fb2c1fbfcb702c6c9d3482d7cbb49e913fe8d1b0331f82957cf5
+    restart: unless-stopped
+    command: >
+      server
+      -dir=/data
+      -master.volumeSizeLimitMB=1024
+      -volume.max=100
+      -s3
+      -s3.port=8333
+      -s3.config=/etc/seaweedfs/s3.json
+    volumes:
+      - seaweed_data:/data
+      # Источник — backend/deploy/seaweedfs/s3.json, скопирован verbatim в ./seaweedfs/.
+      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9333/cluster/status || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+    networks: [crm]
+
+  ntp:
+    image: docker.io/cturra/ntp@sha256:7224d4e7c7833aabbcb7dd70c46c8a8dcccda365314c6db047b9b10403ace3bc
+    restart: unless-stopped
+    cap_add:
+      - SYS_TIME
+      - NET_BIND_SERVICE
+    logging: *logging
+    networks: [crm]
+
+  sms-gateway-mock:
+    # Тот же образ, что api/worker/migrate/seed — отличается только командой
+    # entrypoint.sh (см. комментарий в services у ../images.yaml).
+    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    command: ["sms-gateway-mock"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8090/health/live',
+             timeout=4).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *logging
+    networks: [crm]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak@sha256:82c5b7a110456dbd42b86ea572e728878549954cc8bd03cd65410d75328095d2
+    restart: unless-stopped
+    command:
+      - start
+      - --import-realm
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: ${POSTGRES_USER:-crm}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-crm}
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HOSTNAME_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/auth}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+    volumes:
+      # Источник — backend/deploy/keycloak/realm-crm.json, скопирован verbatim в ./keycloak/.
+      - ./keycloak:/opt/keycloak/data/import:ro
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '\"UP\"' <&3"
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *logging
+    networks: [crm]
+
+  migrate:
+    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    command: ["migrate"]
+    environment:
+      <<: *api-env
+      DATABASE_URL: "postgresql+asyncpg://${POSTGRES_USER:-crm}:${POSTGRES_PASSWORD:-crm}@postgres:5432/\
+        ${POSTGRES_DB:-crm}"
+      WAIT_FOR_POSTGRES: postgres:5432
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    logging: *logging
+    networks: [crm]
+
+  seed:
+    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    command: ["seed"]
+    environment:
+      <<: *api-env
+      WAIT_FOR_POSTGRES: postgres:5432
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+    logging: *logging
+    networks: [crm]
+
+  api:
+    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    command: ["api"]
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      WAIT_FOR_POSTGRES: postgres:5432
+      WAIT_FOR_REDIS: redis:6379
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      seed:
+        condition: service_completed_successfully
+    logging: *logging
+    networks: [crm]
+
+  worker:
+    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    command: ["worker"]
+    restart: unless-stopped
+    environment:
+      <<: *api-env
+      WAIT_FOR_POSTGRES: postgres:5432
+      WAIT_FOR_REDIS: redis:6379
+    healthcheck:
+      test: ["CMD", "arq", "app.worker.main.WorkerSettings", "--check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    logging: *logging
+    networks: [crm]
+
+  caddy:
+    image: docker.io/library/caddy@sha256:af32e97399febea808609119bb21544d0265c58a02836576e32a2d082c262c17
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8080}:8080"
+      - "${HTTPS_PORT:-8443}:8443"
+      - "${S3_PROXY_PORT:-8333}:8333"
+    environment:
+      S3_ORIGIN: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:8333}
+      WEB_UPSTREAM: ${WEB_UPSTREAM:-web:3000}
+      CSP_SCRIPT_SRC: ${CSP_SCRIPT_SRC:-'self'}
+      CRM_TLS_HOST: ${CRM_TLS_HOST:-localhost}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:8080/health/live || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      - api
+      - keycloak
+    logging: *logging
+    networks: [crm]
+
+  web:
+    # Статический SPA (SvelteKit, adapter-static) за тем же Caddy, готовый
+    # образ вместо сборки из ../frontend. Включается профилем, как и в
+    # backend/docker-compose.yml: docker compose --profile web up -d
+    profiles: ["web"]
+    image: ghcr.io/lct-testkit/web:${WEB_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      APP_MODE: ${APP_MODE:-demo}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM:-crm}
+      KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-crm-bff}
+    logging: *logging
+    networks: [crm]
+
+volumes:
+  postgres_data:
+  redis_data:
+  seaweed_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  crm:
+    driver: bridge

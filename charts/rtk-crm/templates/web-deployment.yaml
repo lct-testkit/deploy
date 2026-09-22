@@ -1,0 +1,76 @@
+# web — статический SPA (SvelteKit, adapter-static), отдаётся собственным
+# встроенным в образ Caddy на :3000 (см. комментарий у web в
+# backend/docker-compose.yml). Service нужен, потому что на него
+# ссылается WEB_UPSTREAM у caddy (см. caddy-deployment.yaml).
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "web") | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "web") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "web") | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.web }}
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "web") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "web") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: web
+          image: "{{ include "rtk-crm.webImage" . }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            # demo — экран входа предлагает выбрать демо-учётку; prod —
+            # только вход через Keycloak.
+            - name: APP_MODE
+              value: {{ .Values.env.appMode | quote }}
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.env.keycloakRealm | quote }}
+            - name: KEYCLOAK_CLIENT_ID
+              value: {{ .Values.env.keycloakClientId | quote }}
+          ports:
+            - name: http
+              containerPort: 3000
+          # Образ несёт собственный HEALTHCHECK (GET /config.json) — см.
+          # комментарий у web в backend/docker-compose.yml. Переносим его же
+          # путь напрямую в пробы, а не полагаемся на встроенный в образ
+          # Docker HEALTHCHECK (Kubernetes его не читает).
+          livenessProbe:
+            httpGet:
+              path: /config.json
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /config.json
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
+            initialDelaySeconds: 10
+          resources:
+            {{- toYaml .Values.resources.web | nindent 12 }}

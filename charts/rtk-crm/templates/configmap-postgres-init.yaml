@@ -1,0 +1,24 @@
+# init-keycloak-db.sh — создаёт отдельную базу keycloak при первичной
+# инициализации кластера Postgres. Verbatim-копия
+# backend/deploy/postgres/init-keycloak-db.sh (см. files/init-keycloak-db.sh),
+# идемпотентна (проверяет pg_database перед CREATE DATABASE).
+#
+# ВАЖНО (тот же нюанс, что у compose-версии): официальный образ postgres
+# выполняет /docker-entrypoint-initdb.d/* ТОЛЬКО при первой инициализации
+# PGDATA (пустой volume) — что в контейнере, что в поде это одно и то же
+# поведение entrypoint-скрипта образа. На уже существующем PVC (повторные
+# `helm upgrade` с тем же volumeClaimTemplates) этот скрипт НЕ выполнится —
+# это не отличие K8s от Docker, это поведение самого образа postgres.
+# Поэтому отдельный Job здесь не нужен — просто монтируем как
+# init-скрипт на StatefulSet postgres (см. postgres-statefulset.yaml),
+# как это уже сделано в backend/docker-compose.yml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "postgres") | nindent 4 }}
+data:
+  10-keycloak.sh: |-
+{{ .Files.Get "files/init-keycloak-db.sh" | indent 4 }}

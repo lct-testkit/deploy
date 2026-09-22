@@ -1,0 +1,86 @@
+# redis — единственный инстанс (AOF-персистентность на PVC), как в
+# backend/docker-compose.yml. Реплики намеренно не в values.yaml — см.
+# комментарий в postgres-statefulset.yaml (тот же довод: не кластер).
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "redis") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "redis") | nindent 4 }}
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: redis
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "redis") | nindent 4 }}
+spec:
+  serviceName: redis
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "redis") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "redis") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: redis
+          image: "{{ include "rtk-crm.externalImage" .Values.images.redis }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          # args, НЕ command — см. комментарий в postgres-statefulset.yaml:
+          # compose тоже переопределяет только CMD образа redis, не ENTRYPOINT.
+          args:
+            - redis-server
+            - --appendonly
+            - "yes"
+            - --maxmemory
+            - 512mb
+            # Сессии и идемпотентность терять нельзя, поэтому вытесняем
+            # только ключи с выставленным TTL (1:1 с backend/docker-compose.yml).
+            - --maxmemory-policy
+            - volatile-lru
+          ports:
+            - name: redis
+              containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+          livenessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 10
+          readinessProbe:
+            exec:
+              command: ["redis-cli", "ping"]
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.resources.redis | nindent 12 }}
+  volumeClaimTemplates:
+    - metadata:
+        name: redis-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.redis.accessModes | nindent 10 }}
+        {{- if .Values.persistence.redis.storageClassName }}
+        storageClassName: {{ .Values.persistence.redis.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.redis.size }}

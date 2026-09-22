@@ -1,0 +1,59 @@
+# worker — arq, без HTTP-порта, поэтому без Service (ничего не обращается к
+# нему по сети, только читает очередь Redis — как и в backend/docker-compose.yml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "worker") | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas.worker }}
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "worker") | nindent 8 }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      # backend/docker-compose.yml: depends_on redis (service_healthy) + seed
+      # (service_completed_successfully, см. комментарий в api-deployment.yaml
+      # про то, почему seed не нужен отдельным initContainer'ом здесь).
+      # WAIT_FOR_POSTGRES тоже задан в environment worker в compose (хотя в
+      # depends_on postgres не перечислен явно), поэтому ждём и его тоже.
+      initContainers:
+        {{- include "rtk-crm.waitForPostgres" . | nindent 8 }}
+        {{- include "rtk-crm.waitForRedis" . | nindent 8 }}
+      containers:
+        - name: worker
+          image: "{{ include "rtk-crm.apiImage" . }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args: ["worker"]
+          env:
+            {{- include "rtk-crm.apiEnv" . | nindent 12 }}
+            - name: WAIT_FOR_POSTGRES
+              value: postgres:5432
+            - name: WAIT_FOR_REDIS
+              value: redis:6379
+          # Образ общий с api, где HEALTHCHECK проверяет HTTP-порт. Воркер
+          # HTTP не слушает, поэтому здесь — 1:1 перенос отдельного
+          # healthcheck сервиса worker из backend/docker-compose.yml: `arq
+          # --check` читает собственный heartbeat воркера в Redis.
+          livenessProbe:
+            exec:
+              command: ["arq", "app.worker.main.WorkerSettings", "--check"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+            initialDelaySeconds: 40
+          readinessProbe:
+            exec:
+              command: ["arq", "app.worker.main.WorkerSettings", "--check"]
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+            initialDelaySeconds: 40
+          resources:
+            {{- toYaml .Values.resources.worker | nindent 12 }}

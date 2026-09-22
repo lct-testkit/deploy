@@ -1,0 +1,14 @@
+# s3.json — статичная identity-конфигурация S3 API SeaweedFS (access/secret
+# key, права), verbatim-копия backend/deploy/seaweedfs/s3.json (см.
+# files/s3.json). Монтируется в Pod seaweedfs в /etc/seaweedfs/s3.json
+# (флаг -s3.config, см. seaweedfs-statefulset.yaml).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seaweedfs-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "seaweedfs") | nindent 4 }}
+data:
+  s3.json: |-
+{{ .Files.Get "files/s3.json" | indent 4 }}
