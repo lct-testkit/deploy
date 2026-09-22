@@ -62,6 +62,10 @@ jobs:
       - name: Опубликовать релиз
         uses: softprops/action-gh-release@v2
         with:
+          # На push тега action сам находит тег из GITHUB_REF; на
+          # workflow_dispatch (ручной ретрай без нового тега) рефа-тега нет
+          # вообще — без этого падает "GitHub Releases requires a tag".
+          tag_name: ${{ steps.version.outputs.version }}
           files: rtk-crm-offline-*.tar.gz
           generate_release_notes: true
           body: |
