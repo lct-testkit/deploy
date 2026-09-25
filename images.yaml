@@ -33,14 +33,14 @@ images:
     repo: deploy
     context: mocks/lms
     dockerfile: Dockerfile
-    tag: "sha-d801ce2"
-    digest: "sha256:669aab36ddef8f2436b428f3661150627877ed74ebd72b914c7450c99c02d224"
+    tag: "sha-afed966"
+    digest: "sha256:b10a72ffcc433cfb4b51184c82b3ae57af854fdfc3e94731b2c74f9261f74cfd"
   mock-cms:
     repo: deploy
     context: mocks/cms
     dockerfile: Dockerfile
-    tag: "sha-d801ce2"
-    digest: "sha256:7a1c137b8f389356797e4423d57438310d07e6b11daeec5c88680af432834f73"
+    tag: "sha-afed966"
+    digest: "sha256:714fde3d1af08d08fab5f9d6ffcb2e2f26596574db2c09024a97a99e4bed28b2"
 
 # Сервис compose/helm -> имя образа.
 # api/worker/sms-gateway-mock делят один образ (backend/Dockerfile), отличаются
