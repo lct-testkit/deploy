@@ -109,7 +109,7 @@ def check_values(images_doc: dict) -> None:
                     "их ведёт бот (update_image_refs.py), руками не правим")
 
     for name, ext in external.items():
-        if name == "local-registry":  # только compose-профиль registry, в чарте не нужен
+        if name in ("local-registry", "seed-demo"):  # только compose-профили registry / demo-data, в чарте не нужны
             continue
         v_spec = values_images.get(name)
         if v_spec is None:

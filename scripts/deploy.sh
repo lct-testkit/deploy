@@ -9,7 +9,8 @@
 #
 #   scripts/deploy.sh                      # RTK_ENV=demo (по умолчанию)
 #   RTK_ENV=dev scripts/deploy.sh          # окружение dev
-#   scripts/deploy.sh --init [--profile prod] [--host crm.example.local] [--port-offset 100]
+#   scripts/deploy.sh --init [--profile prod] [--host crm.example.local] [--tls acme|internal|off] [--fonts <каталог>]
+#                            [--port-offset 100]
 #                                          # первый запуск: сгенерировать секреты и runtime/
 #   scripts/deploy.sh rollback             # вернуть образы предыдущего успешного деплоя
 #
@@ -47,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     rollback) MODE="rollback"; shift ;;
     --init) MODE="init"; shift ;;
     --no-pull) NO_PULL=1; shift ;;
-    --profile|--host|--port-offset) INIT_ARGS+=("$1" "$2"); shift 2 ;;
+    --profile|--host|--port-offset|--tls|--fonts) INIT_ARGS+=("$1" "$2"); shift 2 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
 done

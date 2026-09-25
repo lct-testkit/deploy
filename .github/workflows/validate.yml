@@ -100,7 +100,7 @@ jobs:
             -f compose/docker-compose.yml \
             --env-file compose/.env.example \
             --env-file "${RUNNER_TEMP}/env.images" \
-            --profile integrations --profile registry \
+            --profile integrations --profile registry --profile demo-data \
             config --quiet
       - name: Без .env.images compose обязан падать (fail closed)
         run: |
