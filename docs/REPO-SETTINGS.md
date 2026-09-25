@@ -5,6 +5,8 @@
 описаны здесь и применяются скриптом [`scripts/apply_repo_settings.sh`](../scripts/apply_repo_settings.sh)
 (dry-run по умолчанию, `--apply` — применить; нужен `gh` с правами админа организации).
 
+> **Тарифы GitHub.** Rulesets и обязательные проверки в приватных репозиториях доступны на планах Team/Enterprise; code scanning (CodeQL) и secret scanning — только с GitHub Advanced Security. CodeQL-workflow из этого набора убран именно поэтому: без лицензии результаты некуда загрузить.
+
 ## Что и зачем
 
 | Настройка | Где | Зачем |
@@ -12,7 +14,7 @@
 | Ruleset `protect-main` | все 4 репозитория | Запрет удаления и force-push, линейная история, слияние только через PR с одним одобрением (ревью владельцев кода включите после создания команды из `CODEOWNERS` — `require_code_owner_review` в скрипте), все обязательные проверки зелёные и ветка актуальна |
 | Обязательные проверки | ruleset | Имена = `name:` job'ов в workflows. Если переименуете job — обновите список в скрипте |
 | Обход | все; бот — только `deploy` | Администраторы репозитория могут смержить PR без одобрения (иначе в команде из одного человека PR не смержить); в `deploy` GitHub Actions (integration 15368) пишет `images.yaml` прямо в `main` (`notify.yml`). Число одобрений — `REQUIRED_APPROVALS=0 bash scripts/apply_repo_settings.sh --apply` |
-| Secret scanning + push protection | все | Токен не попадает в историю даже случайно |
+| Secret scanning + push protection | все (только с GitHub Advanced Security) | Токен не попадает в историю даже случайно. В приватных репозиториях функция платная: без неё скрипт пропускает шаг с предупреждением, а секреты в коде ловит Trivy в CI |
 | Dependabot alerts / security updates | все | Уязвимые зависимости видны сразу; конфиг обновлений — `.github/dependabot.yml` |
 | Права Actions по умолчанию = read | все | Workflow без явного `permissions:` не может писать; Actions не одобряет PR |
 | Доступ к reusable workflow | `deploy` | Иначе `backend`/`frontend` не смогут вызвать `docker-publish.yml` («Accessible from repositories in the organization») |
