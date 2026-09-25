@@ -100,17 +100,22 @@ for repo in "${REPOS[@]}"; do
     run gh api -X POST "repos/${ORG}/${repo}/rulesets" --input - <<<"${payload}"
   fi
 
-  # 2. Secret scanning + push protection, Dependabot alerts.
+  # 2. Настройки слияния и (опционально) secret scanning.
   run gh api -X PATCH "repos/${ORG}/${repo}" --input - <<<'{
     "delete_branch_on_merge": true,
     "allow_squash_merge": true,
     "allow_merge_commit": false,
-    "allow_rebase_merge": false,
+    "allow_rebase_merge": false
+  }'
+  # Secret scanning и push protection в ПРИВАТНЫХ репозиториях требуют GitHub Advanced Security (платно);
+  # без него запрос вернёт ошибку — это не критично, скрипт продолжает работу. Секреты в коде ловит Trivy в CI.
+  run gh api -X PATCH "repos/${ORG}/${repo}" --input - <<<'{
     "security_and_analysis": {
       "secret_scanning": {"status": "enabled"},
       "secret_scanning_push_protection": {"status": "enabled"}
     }
-  }'
+  }' || echo "::warning::secret scanning недоступен для ${repo} (нужен GitHub Advanced Security) — пропущено"
+  # Dependabot alerts и security updates бесплатны и для приватных репозиториев.
   run gh api -X PUT "repos/${ORG}/${repo}/vulnerability-alerts"
   run gh api -X PUT "repos/${ORG}/${repo}/automated-security-fixes"
 
