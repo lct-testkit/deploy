@@ -47,7 +47,8 @@ checks_for() {
 
 run() {
   if [[ "${APPLY}" == 1 ]]; then
-    "$@"
+    # Тело ответа API (десятки строк JSON) не нужно; ошибки идут в stderr и остаются видны.
+    "$@" >/dev/null && echo "  ok: ${*:1:4}"
   else
     printf '[dry-run] %q ' "$@"; echo
   fi
@@ -92,11 +93,16 @@ for repo in "${REPOS[@]}"; do
   echo "== ${ORG}/${repo}"
 
   # 1. Ruleset защиты main (создать или обновить).
-  # SKIP_RULESET=1 — не трогать защиту main (на тарифе без rulesets запрос завершится ошибкой «upgrade to GitHub Team»).
+  # SKIP_RULESET=1 — не трогать защиту main. Без флага скрипт сам определяет, доступны ли rulesets: в ПРИВАТНЫХ
+  # репозиториях на бесплатном тарифе GitHub отвечает 403 «Upgrade to GitHub Pro or make this repository public» —
+  # тогда защита ветки пропускается с предупреждением, а остальные настройки применяются.
   if [[ "${SKIP_RULESET:-0}" == "1" ]]; then
     echo "  ruleset пропущен (SKIP_RULESET=1)"
+  elif ! rulesets_json="$(gh api "repos/${ORG}/${repo}/rulesets" 2>/dev/null)"; then
+    echo "  ВНИМАНИЕ: rulesets недоступны для ${repo} (приватный репозиторий на бесплатном тарифе: нужен GitHub Pro/Team"
+    echo "            или публичный репозиторий) — защита main НЕ включена, остальные настройки применяются"
   else
-    existing="$(gh api "repos/${ORG}/${repo}/rulesets" --jq ".[] | select(.name==\"${RULESET_NAME}\") | .id" 2>/dev/null || true)"
+    existing="$(printf '%s' "${rulesets_json}" | jq -r ".[] | select(.name==\"${RULESET_NAME}\") | .id" | head -1)"
     payload="$(ruleset_json "${repo}")"
     if [[ -n "${existing}" ]]; then
       run gh api -X PUT "repos/${ORG}/${repo}/rulesets/${existing}" --input - <<<"${payload}"
