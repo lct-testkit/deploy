@@ -31,38 +31,29 @@
 
 Подробности по токенам и GHCR — [`ghcr-setup.md`](ghcr-setup.md).
 
-## rt-ui → frontend: переход с ручного tarball на реестр
+## rt-ui → frontend: пакет в GitHub Packages (выполнено)
 
-Сейчас `frontend` тянет дизайн-систему как `file:./vendor/lct-testkit-rt-ui-0.1.0.tgz`, который кто-то вручную кладёт в
-release `vendor-assets` (`frontend/.github/scripts/restore-vendor.sh`). Версии при этом расходятся молча: в `rt-ui` уже
-есть изменения поверх 0.1.0, а хэш tarball во `frontend/pnpm-lock.yaml` — от старой сборки (локальная сборка `rt-ui` даёт
-другой хэш, и `pnpm install --frozen-lockfile` падает по `ERR_PNPM_TARBALL_INTEGRITY`).
+Раньше `frontend` тянул дизайн-систему как `file:./vendor/lct-testkit-rt-ui-0.1.0.tgz` из вручную загруженного release `vendor-assets`;
+версии расходились молча. Теперь `rt-ui` публикуется приватным пакетом `@lct-testkit/rt-ui` в GitHub Packages (`rt-ui/.github/workflows/release.yml`
+по тегу `vX.Y.Z`), а `frontend` зависит от конкретной версии (`package.json`, `.npmrc` привязывает scope к реестру).
 
-`rt-ui` теперь умеет публиковаться приватным npm-пакетом `@lct-testkit/rt-ui` в GitHub Packages (`rt-ui/.github/workflows/release.yml`
-по тегу `vX.Y.Z`). **Переключать `frontend` можно только ПОСЛЕ первого релиза** — иначе его сборка сломается. Порядок:
+Как устроена авторизация (важно): **pnpm 11 игнорирует токены в `.npmrc` внутри репозитория** (защита от утечки токена на чужой реестр),
+поэтому токен всегда подаётся через ПОЛЬЗОВАТЕЛЬСКИЙ конфиг:
 
-1. `rt-ui`: перенести содержимое `[Unreleased]` в `CHANGELOG.md` под новую версию (например `## [0.1.1] — <дата>`), поднять `version` в `package.json`, `git tag v0.1.1 && git push --tags`. Дождаться зелёного релиза.
-2. Пакет `@lct-testkit/rt-ui` → Package settings → «Manage Actions access» → добавить репозиторий `frontend` (Read).
-3. `frontend`, `.npmrc`:
-   ```
-   engine-strict=true
-   @lct-testkit:registry=https://npm.pkg.github.com
-   //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
-   ```
-4. `frontend`: `.npmrc` требует переменную `NODE_AUTH_TOKEN` при ЛЮБОМ `pnpm install` (без неё pnpm падает «Failed to replace env in config»), локально — `export NODE_AUTH_TOKEN=<classic PAT read:packages>`. Затем `pnpm add @lct-testkit/rt-ui@0.1.1` (обновит `package.json` и `pnpm-lock.yaml`); удалить `vendor/`, `.github/scripts/restore-vendor.sh`, `fs.allow: ['../rt-ui']` в `vite.config.ts`, release `vendor-assets`.
-5. `frontend/.github/workflows/ci.yml`: в jobs `check`/`contract` убрать шаг «Восстановить vendor/», на шаг `pnpm install` добавить `env: NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}`, а в `permissions` job'ов — `packages: read`. В job `publish` убрать `prepare-script` и вместо `secrets: inherit` передать секреты явно (PAT не нужен — достаточно, что пакету выдан доступ репозиторию `frontend`, п.2):
-   ```yaml
-       secrets:
-         DEPLOY_DISPATCH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
-         NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-   ```
-6. `frontend/Dockerfile`: `RUN --mount=type=secret,id=npm_token NODE_AUTH_TOKEN="$(cat /run/secrets/npm_token)" pnpm install --frozen-lockfile` (вместо `COPY vendor`); reusable-workflow `docker-publish.yml` уже передаёт секрет `npm_token` из `NODE_AUTH_TOKEN`.
-7. Дальше Dependabot (`npm`) сам предлагает PR на новые версии `@lct-testkit/rt-ui`.
+| Где | Как |
+|---|---|
+| Локально | один раз: `pnpm config set "//npm.pkg.github.com/:_authToken" <classic PAT, scope read:packages>` |
+| CI | `actions/setup-node` с `registry-url` и `scope` + `NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` на уровне job'а |
+| Docker | BuildKit-секрет `npm_token` → временный пользовательский `.npmrc`, удаляемый в том же `RUN` (`frontend/Dockerfile`) |
+
+Доступ `GITHUB_TOKEN` репозитория `frontend` к пакету выдаётся в настройках пакета (Package settings → «Manage Actions access» → `frontend`, Read).
+Публикация образа передаёт токен в reusable-workflow явно: `secrets: { NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }} }`.
+
+Обновление версии дизайн-системы: новый тег `vX.Y.Z` в `rt-ui` → Dependabot (`npm`) присылает PR во `frontend`, либо вручную `pnpm add @lct-testkit/rt-ui@X.Y.Z`.
 
 ## Ручные шаги, которые остаются за владельцем
 
 1. Применить настройки: `bash scripts/apply_repo_settings.sh --apply`.
 2. Создать секреты из таблицы выше.
 3. Удалить устаревшую ветку бота: `git push origin --delete bot/update-images-35271171079` (в `deploy`).
-4. Выпустить релиз `rt-ui` и выполнить переход `frontend` на реестр — раздел выше.
-5. Выбрать лицензию (`frontend/README.md` прямо говорит, что её нет).
+4. Выбрать лицензию (`frontend/README.md` прямо говорит, что её нет).
