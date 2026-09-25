@@ -1,58 +1,76 @@
 name: notify
 
-# Принимает repository_dispatch от backend/frontend после успешной сборки их
-# образа (см. backend/.github/workflows/build.yml и
-# frontend/.github/workflows/build.yml, шаг «Уведомить deploy») и проставляет
-# tag/digest в images.yaml тем же способом, что update-manifest в build.yml
-# этого репозитория делает для моков — просто с другим триггером.
+# Принимает repository_dispatch от backend/frontend после успешной публикации
+# их образа (см. docker-publish.yml, шаг «Уведомить deploy») и проставляет
+# tag/digest в images.yaml.
+#
+# Защита от отравления манифеста:
+#   * значения client_payload попадают в шелл ТОЛЬКО через env: (не через
+#     ${{ }} в run:) — иначе payload превращается в исполняемый код;
+#   * перед записью проверяется, что образ с таким тегом действительно лежит
+#     в GHCR и указывает на заявленный digest;
+#   * стек с новым образом поднимается и проходит smoke ДО записи в main
+#     (scripts/e2e_stack.sh) — сломанный образ не попадает на стенды;
+#   * один глобальный слот (concurrency), запись с ретраями — параллельные
+#     сборки api и web не теряют обновления друг друга.
 on:
   repository_dispatch:
     types: [backend-image-built, frontend-image-built]
 
 concurrency:
-  # Один слот на конкретный образ: два подряд идущих коммита backend не
-  # должны гоняться за правкой одной и той же строки images.yaml параллельно.
-  group: notify-${{ github.event.client_payload.image }}
+  group: images-manifest
   cancel-in-progress: false
 
 permissions:
   contents: write
+  packages: read
 
 jobs:
   update-manifest:
-    name: обновить images.yaml (${{ github.event.client_payload.image }})
+    name: обновить images.yaml
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      IMAGE: ${{ github.event.client_payload.image }}
+      TAG: ${{ github.event.client_payload.tag }}
+      DIGEST: ${{ github.event.client_payload.digest }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
 
-      - run: pip install pyyaml ruamel.yaml
+      - run: pip install -r scripts/requirements.txt
 
-      - name: Проставить tag/digest
+      - name: GHCR_PULL_TOKEN задан?
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
         run: |
-          python scripts/update_image_refs.py \
-            "${{ github.event.client_payload.image }}" \
-            "${{ github.event.client_payload.tag }}" \
-            "${{ github.event.client_payload.digest }}"
-
-      - name: Самопроверка манифеста
-        run: python scripts/validate_images.py images.yaml
-
-      - name: Закоммитить и запушить в main
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- images.yaml; then
-            echo "images.yaml не изменился — пропуск коммита"
-            exit 0
+          if [ -z "${GHCR_PULL_TOKEN}" ]; then
+            echo "::error::GHCR_PULL_TOKEN не задан — не могу проверить образ в GHCR (docs/ghcr-setup.md)"
+            exit 1
           fi
-          git add images.yaml
-          IMAGE="${{ github.event.client_payload.image }}"
-          TAG="${{ github.event.client_payload.tag }}"
-          git commit -m "chore(images): ${IMAGE} -> ${TAG}"
-          git pull --rebase origin main
-          git push origin HEAD:main
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
+
+      - name: Образ существует и digest совпадает с тегом
+        run: bash scripts/verify_image.sh "$IMAGE" "$TAG" "$DIGEST"
+
+      # Промоушен-гейт: новый образ попадёт в main (и значит на стенды) только если
+      # стек с ним реально поднимается и проходит smoke. Манифест на этом шаге
+      # правится локально в рабочей копии, в git ещё ничего не ушло.
+      - name: Проверить стек с новым образом
+        run: |
+          python scripts/update_image_refs.py "$IMAGE" "$TAG" "$DIGEST"
+          bash scripts/e2e_stack.sh
+
+      - name: Проставить tag/digest и запушить в main
+        run: |
+          bash scripts/apply_and_push.sh \
+            "chore(images): ${IMAGE} -> ${TAG}" \
+            python scripts/update_image_refs.py "$IMAGE" "$TAG" "$DIGEST"

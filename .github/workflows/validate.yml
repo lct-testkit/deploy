@@ -4,52 +4,74 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_call: {}
 
 permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.ref }}
+  group: validate-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  YAMLLINT_VERSION: "1.35.1"
+  HADOLINT_IMAGE: hadolint/hadolint:v2.12.0
+  KUBECONFORM_IMAGE: ghcr.io/yannh/kubeconform:v0.6.7
+  HELM_VERSION: v3.16.4
+  ACTIONLINT_IMAGE: rhysd/actionlint:1.7.7
+  SHELLCHECK_IMAGE: koalaman/shellcheck-alpine:v0.10.0
 
 jobs:
   yaml:
     name: yamllint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - run: pipx run yamllint --strict -c .yamllint.yml .
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: pipx run "yamllint==${YAMLLINT_VERSION}" --strict -c .yamllint.yml .
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Статический анализ workflow (включая проверку выражений и shellcheck)
+        run: docker run --rm -v "$PWD:/repo" -w /repo "${ACTIONLINT_IMAGE}" -color
 
   images-manifest:
     name: images.yaml
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: pip install pyyaml
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: pip install -r scripts/requirements.txt
       - run: python scripts/validate_images.py images.yaml
 
   dockerfiles:
     name: hadolint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: hadolint по всем Dockerfile
         run: |
+          set -uo pipefail
           mapfile -t files < <(git ls-files '*Dockerfile' '*Dockerfile.*' '*.Dockerfile')
           if [ ${#files[@]} -eq 0 ]; then
-            echo "Dockerfile ещё нет — фаза 3"
-            exit 0
+            echo "::error::Dockerfile не найдены — проверка ничего не проверяет"
+            exit 1
           fi
           rc=0
           for f in "${files[@]}"; do
             echo "::group::$f"
-            # info: не валим сборку на стилистике (например, именованный
-            # non-root USER вместо числового UID — тот же приём, что и в
-            # backend/Dockerfile). warning и выше остаются блокирующими.
-            docker run --rm -i hadolint/hadolint:latest \
+            # info не валит сборку (стилистика), warning и выше — блокирующие.
+            docker run --rm -i "${HADOLINT_IMAGE}" \
               hadolint --failure-threshold warning - < "$f" || rc=1
             echo "::endgroup::"
           done
@@ -58,44 +80,99 @@ jobs:
   compose:
     name: docker compose config
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - name: Проверка синтаксиса и разрешения переменных
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: pip install -r scripts/requirements.txt
+      - name: Синтаксис и разрешение переменных со всеми профилями
         run: |
-          if [ ! -f compose/docker-compose.yml ]; then
-            echo "compose ещё нет — фаза 4"
-            exit 0
-          fi
+          set -euo pipefail
+          python scripts/render_env_images.py > "${RUNNER_TEMP}/env.images"
           docker compose \
             -f compose/docker-compose.yml \
             --env-file compose/.env.example \
+            --env-file "${RUNNER_TEMP}/env.images" \
+            --profile integrations --profile registry \
             config --quiet
+      - name: Без .env.images compose обязан падать (fail closed)
+        run: |
+          if docker compose -f compose/docker-compose.yml --env-file compose/.env.example config --quiet 2>/dev/null; then
+            echo "::error::compose собрался без ссылок на образы — в файле появились литералы образов"
+            exit 1
+          fi
+
+  trivy:
+    name: trivy fs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Misconfig-сканер здесь НЕ включён: Helm-чарт пока без securityContext (KSV-0118 и др. — известный долг,
+      # см. RUNBOOK.md, раздел Kubernetes); Dockerfile проверяет hadolint. Включить, когда чарт будет захарденен.
+      - name: Trivy fs (уязвимости зависимостей и секреты)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: shellcheck scripts/*.sh
+        run: docker run --rm -v "$PWD:/mnt" -w /mnt "${SHELLCHECK_IMAGE}" shellcheck -x -S warning scripts/*.sh
 
   helm:
-    name: helm lint
+    name: helm lint + kubeconform
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: ${{ env.HELM_VERSION }}
       - name: Проверка чарта и отрендеренных манифестов
         run: |
-          if [ ! -f charts/rtk-crm/Chart.yaml ]; then
-            echo "чарта ещё нет — фаза 5"
-            exit 0
-          fi
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          set -euo pipefail
           helm lint charts/rtk-crm
           helm template charts/rtk-crm \
-            | docker run --rm -i ghcr.io/yannh/kubeconform:latest -strict -summary -
+            | docker run --rm -i "${KUBECONFORM_IMAGE}" -strict -summary -
 
   drift:
-    name: compose vs helm
+    name: compose · chart · копии конфигов vs images.yaml
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - name: Расхождение версий образов между compose и values
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: lct-testkit/backend
+          path: backend-src
+          token: ${{ secrets.BACKEND_READ_TOKEN || github.token }}
+        continue-on-error: true
+        id: backend
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+      - run: pip install -r scripts/requirements.txt
+      - name: Сверка
         run: |
-          if [ ! -f scripts/check_drift.py ]; then
-            echo "drift-проверки ещё нет — фаза 5"
-            exit 0
+          set -euo pipefail
+          if [ "${{ steps.backend.outcome }}" = "success" ]; then
+            python scripts/check_drift.py --backend-dir backend-src
+          else
+            echo "::warning::checkout backend недоступен (приватный репо без BACKEND_READ_TOKEN) — копии конфигов сверены только внутри deploy"
+            python scripts/check_drift.py
           fi
-          python scripts/check_drift.py

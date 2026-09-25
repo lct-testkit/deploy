@@ -2,54 +2,52 @@
 
 Тот же стек и та же топология сервисов, что в `backend/docker-compose.yml`
 (PostgreSQL 16, Redis 7, SeaweedFS, Keycloak 25, Caddy, arq — раздел
-спецификации по составу контура), с одним отличием:
+спецификации по составу контура), с отличиями:
 
 | | `backend/docker-compose.yml` | этот файл (`deploy/compose/`) |
 |---|---|---|
-| Образы `api`/`worker`/`migrate`/`seed`/`sms-gateway-mock` | `build: .` (собираются из исходников `backend/`) | `image: ghcr.io/lct-testkit/api:${API_TAG:-latest}` (готовый образ) |
-| Образ `web` | `build: ../frontend` | `image: ghcr.io/lct-testkit/web:${WEB_TAG:-latest}` (готовый образ) |
-| Внешние образы (`postgres`, `redis`, `keycloak`, `seaweedfs`, `caddy`, `ntp`) | тег без пина | тот же тег, запинненный по digest из `../images.yaml` |
-| Назначение | локальная разработка/демо на машине разработчика | реальный сервер — не требует исходников `backend`/`frontend`, только Docker и доступ к `ghcr.io/lct-testkit/*` |
+| Образы `api`/`worker`/`migrate`/`seed`/`sms-gateway-mock`, `web` | `build:` (из исходников) | `image: ${API_IMAGE}` / `${WEB_IMAGE}` — готовые образы по digest |
+| Внешние образы (`postgres`, `redis`, `keycloak`, `seaweedfs`, `caddy`, `ntp`) | тег без пина | `${POSTGRES_IMAGE}` и т.д. — запинены по digest в `../images.yaml` |
+| Назначение | локальная разработка/демо на машине разработчика | реальный сервер: только Docker и образы (GHCR, внутренний registry или офлайн-бандл) |
 
-Остальное — healthcheck'и, `depends_on`, volumes, сети, переменные окружения
-(whitelist `x-api-env`) — скопировано без изменений из `backend/docker-compose.yml`.
+**В файле нет литералов образов.** Все ссылки — переменные `<ИМЯ>_IMAGE`, которые
+генерирует `../scripts/render_env_images.py` из `../images.yaml`. Без `.env.images`
+compose не стартует (fail closed) — так «в compose один digest, а в манифесте другой»
+невозможно.
 
 ## Файлы
 
-- `docker-compose.yml` — сам стек.
-- `.env.example` — переменные окружения (та же структура и дефолты, что
-  `backend/.env.example`, плюс `API_TAG`/`WEB_TAG` внизу).
-- `Caddyfile` — точная копия `backend/deploy/Caddyfile` (тот же `dynamic a`
-  upstream на `api`, он корректно резолвится через встроенный DNS Docker
-  Compose — в отличие от Helm-версии, см. `../charts/rtk-crm/`).
-- `postgres/init-keycloak-db.sh`, `seaweedfs/s3.json`, `keycloak/realm-crm.json`
-  — verbatim-копии соответствующих файлов из `backend/deploy/` (bind-mount'ятся
-  в контейнеры, путь ссылок в `docker-compose.yml` — уже относительно этого каталога).
+- `docker-compose.yml` — сам стек. Профили: без флага — весь боевой стек (включая `web`);
+  `integrations` — `mock-lms`/`mock-cms`; `registry` — внутренний registry (`127.0.0.1:5000`).
+- `.env.example` — переменные окружения (структура и дефолты как в `backend/.env.example`).
+  Секретов там демо-значения; боевой `.env` генерирует `../scripts/gen_env.sh`.
+- `Caddyfile`, `postgres/init-keycloak-db.sh`, `seaweedfs/s3.json`, `keycloak/realm-crm.json`
+  — копии файлов из `backend/deploy/` (сверяет `../scripts/check_drift.py --backend-dir`).
+  `s3.json` и `realm-crm.json` — ДЕМО-версии с публичными секретами; для боя
+  `gen_env.sh` создаёт их сгенерированные варианты в `runtime/` и прописывает пути в `.env`
+  (`SEAWEED_S3_CONFIG`, `KEYCLOAK_IMPORT_DIR`).
 
 ## Запуск
 
 ```bash
-cp .env.example .env
-# отредактировать .env — ОБЯЗАТЕЛЬНО сменить секреты, помеченные
-# "СМЕНИТЬ ДЛЯ PROD" (POSTGRES_PASSWORD, CRM_APP_PASSWORD,
-# KEYCLOAK_ADMIN_PASSWORD, KEYCLOAK_CLIENT_SECRET,
-# KEYCLOAK_ADMIN_CLIENT_SECRET, SIGNATURE_SERVER_SECRET, S3_ACCESS_KEY,
-# S3_SECRET_KEY) — дефолты подходят только для демо/оценки.
-
-docker compose up -d              # ядро контура (postgres, redis, seaweedfs, ntp,
-                                   # sms-gateway-mock, keycloak, migrate, seed, api, worker, caddy)
-docker compose --profile web up -d   # то же плюс web — так же, как в backend/docker-compose.yml
+bash ../scripts/gen_env.sh --dir . --profile demo          # .env + runtime/ со случайными секретами
+python3 ../scripts/render_env_images.py > .env.images       # ссылки на образы из images.yaml
+docker compose --env-file .env --env-file .env.images up -d --wait
+bash ../scripts/smoke.sh http://localhost:8080
 ```
 
-Приложение будет доступно на `http://<сервер>:${HTTP_PORT:-8080}` (и
-`https://<сервер>:${HTTPS_PORT:-8443}` с самоподписанным сертификатом
-`tls internal`).
+Приложение — `http://<сервер>:${HTTP_PORT:-8080}` (и `https://<сервер>:${HTTPS_PORT:-8443}`
+с самоподписанным сертификатом `tls internal`). Наружу публикуются только порты Caddy;
+PostgreSQL — только на loopback хоста (`127.0.0.1:${POSTGRES_PORT:-5433}`).
+Для нескольких окружений на одной машине: `-p <имя-проекта>` и `gen_env.sh --port-offset N`.
+Для боя и автодеплоя используйте `../scripts/deploy.sh` (см. `../RUNBOOK.md`).
 
 ## Проверка конфигурации
 
 ```bash
-docker compose --env-file .env.example config --quiet
+python3 ../scripts/render_env_images.py > /tmp/env.images
+docker compose --env-file .env.example --env-file /tmp/env.images \
+  --profile integrations --profile registry config --quiet
 ```
 
-Ничего не должно быть выведено и код возврата должен быть `0` — значит YAML
-и все `${...}`-подстановки валидны.
+Ничего не выводится, код возврата `0` — YAML и все `${...}`-подстановки валидны.

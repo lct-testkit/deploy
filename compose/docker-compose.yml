@@ -1,12 +1,17 @@
 # Прод-профиль RTK School CRM: тот же стек и топология, что
-# backend/docker-compose.yml, но образы api/web тянутся готовыми из
-# ghcr.io/lct-testkit/* (см. ../images.yaml), а не собираются локально.
-# Рассчитан на реальный сервер, а не на локальную разработку — подробнее
-# см. README.md рядом с этим файлом.
+# backend/docker-compose.yml, но образы тянутся готовыми (см. ../images.yaml),
+# а не собираются локально. Рассчитан на реальный сервер, а не на локальную
+# разработку — подробнее см. README.md рядом с этим файлом.
 #
-#   cp .env.example .env   # и обязательно смените секреты (см. комментарий вверху .env.example)
-#   docker compose up -d
-#   docker compose --profile web up -d   # чтобы поднять ещё и web (см. README.md)
+# В файле НЕТ литералов образов: каждый `image:` — переменная <ИМЯ>_IMAGE из
+# .env.images, который генерирует scripts/render_env_images.py из images.yaml.
+#
+#   bash scripts/gen_env.sh                      # .env с новыми секретами + runtime/
+#   python scripts/render_env_images.py > .env.images
+#   docker compose --env-file .env --env-file .env.images up -d
+#
+# Профили: без флага — весь боевой стек (включая web); `integrations` —
+# mock-lms/mock-cms; `registry` — внутренний registry контура.
 
 name: rtk-crm
 
@@ -58,9 +63,7 @@ x-api-env: &api-env
 
 services:
   postgres:
-    # Пин по digest из ../images.yaml (не только тег — офлайн-бандл должен
-    # брать гарантированно тот же образ, что был проверен на стенде).
-    image: docker.io/library/postgres@sha256:3c5c8892d184f738f4fe282d14ddaa613a38f00f4189d2d94725ebe6f2909ddb
+    image: ${POSTGRES_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-crm}
@@ -83,7 +86,8 @@ services:
       # verbatim в ./postgres/ (см. README.md этого каталога).
       - ./postgres/init-keycloak-db.sh:/docker-entrypoint-initdb.d/10-keycloak.sh:ro
     ports:
-      - "${POSTGRES_PORT:-5433}:5432"
+      # Только loopback хоста (psql/pg_dump с самой машины); наружу порт не публикуем.
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-crm} -d ${POSTGRES_DB:-crm}"]
       interval: 10s
@@ -93,7 +97,7 @@ services:
     networks: [crm]
 
   redis:
-    image: docker.io/library/redis@sha256:520775a41a63e77e06c73e35d2fd9cc15921a609516818796b4ecbb813078bc7
+    image: ${REDIS_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     command:
       - redis-server
@@ -114,7 +118,7 @@ services:
     networks: [crm]
 
   seaweedfs:
-    image: docker.io/chrislusf/seaweedfs@sha256:172f7f002fb5fb2c1fbfcb702c6c9d3482d7cbb49e913fe8d1b0331f82957cf5
+    image: ${SEAWEEDFS_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     command: >
       server
@@ -127,17 +131,22 @@ services:
     volumes:
       - seaweed_data:/data
       # Источник — backend/deploy/seaweedfs/s3.json, скопирован verbatim в ./seaweedfs/.
-      - ./seaweedfs/s3.json:/etc/seaweedfs/s3.json:ro
+      # Демо-файл из репо или runtime/seaweedfs/s3.json, сгенерированный gen_env.sh
+      # с секретами из .env (SEAWEED_S3_CONFIG задаётся в .env).
+      - ${SEAWEED_S3_CONFIG:-./seaweedfs/s3.json}:/etc/seaweedfs/s3.json:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9333/cluster/status || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
+      # master и volume-сервер SeaweedFS стартуют друг за другом; сбои в этот
+      # период не считаются (иначе `up --wait` падал на холодном старте).
+      start_period: 40s
     logging: *logging
     networks: [crm]
 
   ntp:
-    image: docker.io/cturra/ntp@sha256:7224d4e7c7833aabbcb7dd70c46c8a8dcccda365314c6db047b9b10403ace3bc
+    image: ${NTP_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     cap_add:
       - SYS_TIME
@@ -148,7 +157,7 @@ services:
   sms-gateway-mock:
     # Тот же образ, что api/worker/migrate/seed — отличается только командой
     # entrypoint.sh (см. комментарий в services у ../images.yaml).
-    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    image: ${API_IMAGE:?выполните scripts/render_env_images.py}
     command: ["sms-gateway-mock"]
     restart: unless-stopped
     healthcheck:
@@ -159,11 +168,13 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
   keycloak:
-    image: quay.io/keycloak/keycloak@sha256:82c5b7a110456dbd42b86ea572e728878549954cc8bd03cd65410d75328095d2
+    image: ${KEYCLOAK_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     command:
       - start
@@ -185,7 +196,8 @@ services:
       KC_METRICS_ENABLED: "true"
     volumes:
       # Источник — backend/deploy/keycloak/realm-crm.json, скопирован verbatim в ./keycloak/.
-      - ./keycloak:/opt/keycloak/data/import:ro
+      # Демо-realm из репо или runtime/keycloak/, сгенерированный gen_env.sh.
+      - ${KEYCLOAK_IMPORT_DIR:-./keycloak}:/opt/keycloak/data/import:ro
     healthcheck:
       test:
         - CMD
@@ -205,7 +217,7 @@ services:
     networks: [crm]
 
   migrate:
-    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    image: ${API_IMAGE:?выполните scripts/render_env_images.py}
     command: ["migrate"]
     environment:
       <<: *api-env
@@ -216,11 +228,13 @@ services:
       postgres:
         condition: service_healthy
     restart: "no"
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
   seed:
-    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    image: ${API_IMAGE:?выполните scripts/render_env_images.py}
     command: ["seed"]
     environment:
       <<: *api-env
@@ -229,11 +243,13 @@ services:
       migrate:
         condition: service_completed_successfully
     restart: "no"
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
   api:
-    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    image: ${API_IMAGE:?выполните scripts/render_env_images.py}
     command: ["api"]
     restart: unless-stopped
     environment:
@@ -250,11 +266,13 @@ services:
         condition: service_healthy
       seed:
         condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
   worker:
-    image: ghcr.io/lct-testkit/api:${API_TAG:-latest}
+    image: ${API_IMAGE:?выполните scripts/render_env_images.py}
     command: ["worker"]
     restart: unless-stopped
     environment:
@@ -272,13 +290,14 @@ services:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
   caddy:
-    # 2.11, не 2.8: Trivy 22.09.2026 нашёл 87 CVE в 2.8.4 (5 CRITICAL) с
-    # фиксом только в линии 2.11.x — см. ../../frontend/.trivyignore.
-    image: docker.io/library/caddy@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+    # Версия и digest — в ../images.yaml (external.caddy).
+    image: ${CADDY_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     ports:
       - "${HTTP_PORT:-8080}:8080"
@@ -302,26 +321,72 @@ services:
       retries: 5
       start_period: 20s
     depends_on:
-      - api
-      - keycloak
+      api:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      web:
+        condition: service_started
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
   web:
     # Статический SPA (SvelteKit, adapter-static) за тем же Caddy, готовый
-    # образ вместо сборки из ../frontend. Включается профилем, как и в
-    # backend/docker-compose.yml: docker compose --profile web up -d
-    profiles: ["web"]
-    image: ghcr.io/lct-testkit/web:${WEB_TAG:-latest}
+    # образ вместо сборки из ../frontend. Входит в основной стек: без него
+    # Caddy отдаёт 502 на `/`.
+    image: ${WEB_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     environment:
       APP_MODE: ${APP_MODE:-demo}
       KEYCLOAK_REALM: ${KEYCLOAK_REALM:-crm}
       KEYCLOAK_CLIENT_ID: ${KEYCLOAK_CLIENT_ID:-crm-bff}
+      # Нужен только APP_MODE=demo (вход паролем прямо из SPA): entrypoint подставляет секрет
+      # в config.json. В prod-режиме образ web его не использует.
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-crm-bff-secret}
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
+  # Заглушки внешних контрактов (спека §4.14): Prism поднимает сервер из
+  # OpenAPI. Профиль integrations: docker compose --profile integrations up -d
+  mock-lms:
+    profiles: ["integrations"]
+    image: ${MOCK_LMS_IMAGE:?выполните scripts/render_env_images.py}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
+  mock-cms:
+    profiles: ["integrations"]
+    image: ${MOCK_CMS_IMAGE:?выполните scripts/render_env_images.py}
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
+  # Внутренний registry закрытого контура: scripts/registry_load.sh заливает
+  # в него образы из офлайн-бандла. Профиль registry, порт только на loopback.
+  local-registry:
+    profiles: ["registry"]
+    image: ${LOCAL_REGISTRY_IMAGE:?выполните scripts/render_env_images.py}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REGISTRY_PORT:-5000}:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    security_opt:
+      - no-new-privileges:true
     logging: *logging
     networks: [crm]
 
 volumes:
+  registry_data:
   postgres_data:
   redis_data:
   seaweed_data:

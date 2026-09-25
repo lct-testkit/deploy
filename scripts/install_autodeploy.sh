@@ -7,10 +7,14 @@
 #
 # Идемпотентен. Запускать руками на целевой VM с правами sudo, из корня
 # чекаута этого репозитория (тот же чекаут, что использует deploy.sh):
-#   sudo bash scripts/install_autodeploy.sh [demo|dev]
+#   sudo bash scripts/install_autodeploy.sh [demo|dev]   # prod намеренно исключён
 set -euo pipefail
 
 RTK_ENV="${1:-demo}"
+if [[ "${RTK_ENV}" == "prod" ]]; then
+  echo "prod не автодеплоится: выкладка на prod — только осознанным запуском scripts/deploy.sh (RTK_ENV=prod)" >&2
+  exit 1
+fi
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UNIT_NAME="rtk-${RTK_ENV}-autodeploy"
@@ -37,9 +41,9 @@ Environment=RTK_ENV=${RTK_ENV}
 WorkingDirectory=${REPO_DIR}
 ExecStart=${REPO_DIR}/scripts/deploy.sh
 # Пять минут — ощутимо дольше самого долгого шага деплоя (docker compose
-# pull на медленной сети), поэтому таймаут ловит реальное зависание, а не
-# обычный прогон.
-TimeoutStartSec=300
+# pull на медленной сети, бэкап, --wait до 5 мин, smoke до 3 мин, откат), поэтому
+# таймаут ловит реальное зависание, а не обычный прогон.
+TimeoutStartSec=1500
 EOF
 
 cat > "/etc/systemd/system/${UNIT_NAME}.timer" <<EOF

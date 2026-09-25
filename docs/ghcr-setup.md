@@ -7,15 +7,17 @@
 ## 1. PAT для VM (только pull)
 
 1. GitHub → Settings → Developer settings → Personal access tokens →
-   Fine-grained tokens → Generate new token.
-2. Владелец — организация `lct-testkit`, срок действия — на своё
-   усмотрение (рекомендуется не «No expiration»).
-3. Права: **только** `read:packages` (Package: Read-only). Никаких прав
-   на запись/push — это «robot-аккаунт только на pull»: утечёт — пушить
-   образы им нельзя.
+   **Tokens (classic)** → Generate new token (classic). GHCR не поддерживает
+   fine-grained токены для пакетов — только classic.
+2. Срок действия — на своё усмотрение (рекомендуется не «No expiration»).
+   Токен выпускается от имени сервисного пользователя-члена организации
+   `lct-testkit`, которому выдан **Read** на пакеты `api`, `web`, `mock-*`
+   (Package settings → Manage Actions access / Manage access).
+3. Scope: **только** `read:packages`. Никаких прав на запись/push — это
+   «robot-аккаунт только на pull»: утечёт — пушить образы им нельзя.
 4. На VM под пользователем `deploy` (создан `scripts/provision_vm.sh`):
    ```bash
-   docker login ghcr.io -u <github-user> -p <PAT>
+   echo <PAT> | docker login ghcr.io -u <github-user> --password-stdin
    ```
    Сохранит креды в `~/.docker/config.json` пользователя `deploy`.
 5. Тот же PAT (или второй такой же — токен один раз показывается при
@@ -45,10 +47,10 @@ Manage retention policy):
 
 ## 4. `DEPLOY_DISPATCH_TOKEN` — уведомление deploy о новом образе
 
-Без него `backend`/`frontend` соберут и запушат образ, но шаг «Уведомить
-deploy» молча пропустится (`::warning::` в логе, джоб не падает) —
-`images.yaml` в `deploy` не обновится, и autodeploy/`render_env_images.py`
-продолжит смотреть на старый тег.
+Без него `backend`/`frontend` опубликуют образ, но шаг «Уведомить deploy»
+УПАДЁТ (`::error::`, джоб красный) — раньше он молча пропускался, и
+`images.yaml` тихо переставал обновляться. Пока токен не задан, образ в GHCR
+есть, а автодеплой продолжает смотреть на старый тег.
 
 1. GitHub → Settings → Developer settings → Personal access tokens →
    Fine-grained tokens → Generate new token.

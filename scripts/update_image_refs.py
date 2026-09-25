@@ -63,7 +63,29 @@ def main() -> int:
         yaml.dump(doc, f)
 
     print(f"images.{image}: tag={tag} digest={digest}")
+    sync_helm_values(image, tag, digest)
     return 0
+
+
+def sync_helm_values(image: str, tag: str, digest: str) -> None:
+    """Держит charts/rtk-crm/values.yaml в согласии с images.yaml (только api/web).
+
+    Правка текстовая (regex по блоку образа), а не yaml round-trip: комментарии и форматирование
+    values.yaml сохраняются как есть. Образы, которых нет в чарте (моки), пропускаются.
+    """
+    values = Path("charts/rtk-crm/values.yaml")
+    if not values.exists():
+        return
+    text = values.read_text(encoding="utf-8")
+    pattern = re.compile(
+        rf'(^  {re.escape(image)}:\n    repository: {re.escape(image)}[^\n]*\n)    tag: [^\n]*\n(?:    digest: [^\n]*\n)?',
+        re.M,
+    )
+    if not pattern.search(text):
+        return
+    updated = pattern.sub(lambda m: f'{m.group(1)}    tag: {tag}\n    digest: "{digest}"\n', text, count=1)
+    values.write_text(updated, encoding="utf-8", newline="\n")
+    print(f"charts/rtk-crm/values.yaml: images.{image} -> tag={tag} digest={digest}")
 
 
 if __name__ == "__main__":

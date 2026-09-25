@@ -18,13 +18,16 @@ images:
   # kubernetes.io/dockerconfigjson здесь (создаётся вне чарта).
   pullSecrets: []
 
-  # Свои образы — только тег, без digest (CI публикует новые теги на каждый релиз).
+  # Свои образы: тег и digest проставляет бот (notify.yml → scripts/update_image_refs.py) синхронно с ../../images.yaml;
+  # drift-проверка (scripts/check_drift.py) падает при расхождении. Руками не правим.
   api:
     repository: api   # -> ghcr.io/lct-testkit/api ; используют api/worker/migrate/seed/sms-gateway-mock
-    tag: latest
+    tag: sha-19caa01
+    digest: "sha256:a0cac3e924431d50e62dc1cc020bf009ebb6a27151a2b5c5ca2fb299dd9dc62a"
   web:
     repository: web   # -> ghcr.io/lct-testkit/web
-    tag: latest
+    tag: sha-c398bf3
+    digest: "sha256:f2cf37e65b7a869a83f282ab745a6047cd0e9df8954fd2f675c7d5d0358f12ff"
 
   # Внешние образы — пин по digest из ../../images.yaml (не только тег,
   # чтобы попасть гарантированно в тот же образ, что зафиксирован в

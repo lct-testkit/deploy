@@ -1,7 +1,12 @@
 # Единый источник истины по образам RTK School CRM.
-# Из этого файла генерируются compose и Helm values .
-# tag/digest для собственных образов заполняет CI бэка/фронта через
-# repository_dispatch -> PR в этот репозиторий. Руками не правим.
+# compose/docker-compose.yml не содержит ни одного литерала образа — все
+# ссылки приходят переменными `<NAME>_IMAGE` из `.env.images`, который
+# генерирует `scripts/render_env_images.py` из этого файла (режимы: digest —
+# онлайн, bundle — офлайн-бандл, registry — внутренний registry контура).
+# Helm values сверяются с этим файлом в `scripts/check_drift.py`.
+# tag/digest собственных образов заполняет бот (`.github/workflows/notify.yml`
+# по repository_dispatch от backend/frontend): проверяет, что образ есть в
+# GHCR и digest совпадает с тегом, и коммитит в main. Руками не правим.
 version: 1
 
 registry:
@@ -80,9 +85,15 @@ external:
     # критического пути, не опция.
     ref: docker.io/cturra/ntp:latest
     digest: "sha256:7224d4e7c7833aabbcb7dd70c46c8a8dcccda365314c6db047b9b10403ace3bc"
+  local-registry:
+    # Внутренний registry закрытого контура (профиль compose `registry`):
+    # scripts/registry_load.sh заливает в него образы из офлайн-бандла.
+    ref: docker.io/library/registry:2
+    digest: "sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
 
-# Профили — что не входит в критический путь и поднимается по требованию.
-# Держим здесь, чтобы список сервисов был в одном месте.
+# Профили compose. core поднимается всегда (`docker compose up -d`): это
+# ровно то, что запускает compose/docker-compose.yml без --profile.
+# integrations и registry включаются явно.
 profiles:
   core:
     - caddy
@@ -90,6 +101,8 @@ profiles:
     - keycloak
     - redis
     - ntp
+    - seaweedfs
+    - sms-gateway-mock
     - api
     - worker
     - migrate
@@ -98,10 +111,5 @@ profiles:
   integrations:
     - mock-lms
     - mock-cms
-  storage:
-    - seaweedfs
-  # sms-gateway-mock замещает реальный SMS-шлюз (нет в спецификации внешнего
-  # провайдера, раздел 9) — часть критического пути ПЭП в demo/dev, но не core
-  # в проде с настоящим шлюзом, поэтому отдельным профилем, включён по умолчанию.
-  otp-mock:
-    - sms-gateway-mock
+  registry:
+    - local-registry

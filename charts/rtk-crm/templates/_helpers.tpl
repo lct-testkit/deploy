@@ -57,11 +57,11 @@ imagePullSecrets:
 
 {{/* Образ api — используют api/worker/migrate/seed/sms-gateway-mock (один и тот же образ, разная команда). */}}
 {{- define "rtk-crm.apiImage" -}}
-{{ .Values.images.registry }}/{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}
+{{ .Values.images.registry }}/{{ .Values.images.api.repository }}:{{ .Values.images.api.tag }}{{ if .Values.images.api.digest }}@{{ .Values.images.api.digest }}{{ end }}
 {{- end -}}
 
 {{- define "rtk-crm.webImage" -}}
-{{ .Values.images.registry }}/{{ .Values.images.web.repository }}:{{ .Values.images.web.tag }}
+{{ .Values.images.registry }}/{{ .Values.images.web.repository }}:{{ .Values.images.web.tag }}{{ if .Values.images.web.digest }}@{{ .Values.images.web.digest }}{{ end }}
 {{- end -}}
 
 {{/* Внешние образы — пин по digest, без тега (см. ../../images.yaml). Вызов: include "rtk-crm.externalImage" .Values.images.postgres */}}
