@@ -92,12 +92,17 @@ for repo in "${REPOS[@]}"; do
   echo "== ${ORG}/${repo}"
 
   # 1. Ruleset защиты main (создать или обновить).
-  existing="$(gh api "repos/${ORG}/${repo}/rulesets" --jq ".[] | select(.name==\"${RULESET_NAME}\") | .id" 2>/dev/null || true)"
-  payload="$(ruleset_json "${repo}")"
-  if [[ -n "${existing}" ]]; then
-    run gh api -X PUT "repos/${ORG}/${repo}/rulesets/${existing}" --input - <<<"${payload}"
+  # SKIP_RULESET=1 — не трогать защиту main (на тарифе без rulesets запрос завершится ошибкой «upgrade to GitHub Team»).
+  if [[ "${SKIP_RULESET:-0}" == "1" ]]; then
+    echo "  ruleset пропущен (SKIP_RULESET=1)"
   else
-    run gh api -X POST "repos/${ORG}/${repo}/rulesets" --input - <<<"${payload}"
+    existing="$(gh api "repos/${ORG}/${repo}/rulesets" --jq ".[] | select(.name==\"${RULESET_NAME}\") | .id" 2>/dev/null || true)"
+    payload="$(ruleset_json "${repo}")"
+    if [[ -n "${existing}" ]]; then
+      run gh api -X PUT "repos/${ORG}/${repo}/rulesets/${existing}" --input - <<<"${payload}"
+    else
+      run gh api -X POST "repos/${ORG}/${repo}/rulesets" --input - <<<"${payload}"
+    fi
   fi
 
   # 2. Настройки слияния и (опционально) secret scanning.
