@@ -9,7 +9,7 @@
 set -euo pipefail
 
 DEPLOY_USER="${DEPLOY_USER:-deploy}"
-DIRS=(/srv/rtk-dev /srv/rtk-demo)
+DIRS=(/srv/rtk-dev /srv/rtk-demo /srv/rtk-prod)
 SWAPFILE="/swapfile"
 SWAPSIZE_MB=2048
 
@@ -34,7 +34,7 @@ echo "== пользователь ${DEPLOY_USER} =="
 if id "${DEPLOY_USER}" >/dev/null 2>&1; then
   echo "пользователь ${DEPLOY_USER} уже существует — пропуск"
 else
-  useradd --system --create-home --groups docker --shell /usr/sbin/nologin "${DEPLOY_USER}"
+  useradd --system --create-home --groups docker --shell /bin/bash "${DEPLOY_USER}"
   echo "создан пользователь ${DEPLOY_USER} (в группе docker)"
 fi
 
@@ -66,6 +66,7 @@ fi
 cat <<EOF
 
 Готово. Дальше руками (см. docs/ghcr-setup.md):
-  1. создать PAT (read:packages) в GitHub;
-  2. su - ${DEPLOY_USER} -c 'docker login ghcr.io -u <github-user> -p <PAT>'
+  1. создать classic PAT (scope read:packages) в GitHub;
+  2. sudo -iu ${DEPLOY_USER} и там: echo <PAT> | docker login ghcr.io -u <github-user> --password-stdin
+     (токен не должен попасть в историю shell — поэтому --password-stdin, а не -p)
 EOF

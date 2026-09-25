@@ -3,42 +3,62 @@
 <sub>Команда **«Тесткит»** — [github.com/lct-testkit](https://github.com/lct-testkit)</sub>
 
 Инфраструктурный репозиторий проекта RTK School CRM: сборка образов,
-CI/CD, развёртывание (живой демо-стенд, Kubernetes, офлайн-поставка).
+CI/CD, развёртывание (живой стенд, Kubernetes, офлайн-поставка).
 Бизнес-логика живёт в соседних репозиториях организации `lct-testkit` —
-`backend` (FastAPI) и `frontend` (SvelteKit). Пошаговая инструкция —
-[`RUNBOOK.md`](RUNBOOK.md): провижининг VM, первый деплой, автодеплой,
-откат, Kubernetes/Helm, офлайн-установка, бэкап/восстановление.
+`backend` (FastAPI), `frontend` (SvelteKit), `rt-ui` (дизайн-система). Пошаговая
+инструкция — [`RUNBOOK.md`](RUNBOOK.md): конвейер поставки, провижининг VM,
+первый деплой, автодеплой, откат, офлайн-установка, бэкап/восстановление, Helm.
+
+## Как устроена поставка
+
+Образ попадает на стенды только пройдя гейты: `backend`/`frontend` публикуют образ
+(общий workflow [`docker-publish.yml`](.github/workflows/docker-publish.yml): сборка →
+Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` перед записью в
+`images.yaml` проверяет образ в GHCR и **поднимает стек с ним и гоняет smoke**.
+Подробная схема — в [`RUNBOOK.md`](RUNBOOK.md#конвейер-поставки-cicd-целиком).
 
 ## Состав репозитория
 
-| Путь | Назначение | Статус |
-|---|---|---|
-| `images.yaml` | Единый источник истины по образам: реестр, теги/digest, сервисы, профили | готово, 6 внешних образов запинены по digest с живого стенда; `api`/`web` — без tag/digest до первой сборки CI |
-| `scripts/validate_images.py` | Валидация `images.yaml` | готово |
-| `scripts/check_drift.py` | Сверка `compose/` и `charts/` с `images.yaml` (расхождение digest/имени образа) | готово |
-| `scripts/render_env_images.py`, `deploy.sh`, `install_autodeploy.sh` | Автодеплой на VM: тег из `images.yaml` → `.env.images` → `docker compose pull/up`, systemd-таймер | готово |
-| `scripts/build_offline_bundle.sh` | Сборка офлайн-архива (образы + `compose/` + `install.sh`) | готово, сборка проверена вживую (6 внешних образов) |
-| `scripts/provision_vm.sh` | Подготовка VM: Docker/compose, пользователь `deploy`, каталоги, swap | готово |
-| `.github/workflows/validate.yml` | CI: yamllint, валидация манифеста, hadolint, compose/helm/drift | готово, все джобы теперь реально выполняются (не `exit 0`-заглушки) |
-| `.github/workflows/build.yml` | Сборка и публикация образов моков в GHCR | готово |
-| `.github/workflows/notify.yml` | Приём `repository_dispatch` от backend/frontend, обновление `images.yaml` | готово |
-| `.github/workflows/release.yml` | На теге `vX.Y.Z` — сборка и публикация офлайн-бандла релизом GitHub | готово |
-| `compose/` | Прод-профиль docker-compose (готовые образы `ghcr.io/lct-testkit/*`, не сборка) | готово: `docker compose config --quiet` проходит |
-| `charts/rtk-crm/` | Helm-чарт — та же топология в Kubernetes | готово: `helm lint` и `helm template \| kubeconform -strict` проходят (26 объектов, 0 ошибок) |
-| `mocks/lms`, `mocks/cms` | Заглушки внешних контрактов (LMS, Laravel CMS) | готово |
+| Путь | Назначение |
+|---|---|
+| `images.yaml` | Единый источник истины по образам: реестр, tag/digest, внешние образы (по digest), сервисы, профили |
+| `compose/` | Прод-профиль docker-compose. Литералов образов нет — только `<ИМЯ>_IMAGE` из `.env.images` |
+| `charts/rtk-crm/` | Helm-чарт (та же топология); проверяется lint + kubeconform + drift |
+| `mocks/lms`, `mocks/cms` | Заглушки внешних контрактов (LMS, Laravel CMS), профиль compose `integrations` |
+| `scripts/render_env_images.py` | `images.yaml` → `.env.images` (режимы `digest` / `bundle` / `registry`) |
+| `scripts/gen_env.sh` | Секреты + согласованные `runtime/keycloak/realm-crm.json` и `runtime/seaweedfs/s3.json`; `--host`, `--port-offset` |
+| `scripts/deploy.sh` | Деплой окружения (`--init`, `rollback`): бэкап → `up --wait` → smoke → автооткат |
+| `scripts/smoke.sh`, `e2e_stack.sh` | Дымовая проверка и сквозной сценарий стенда (up → smoke → бэкап → восстановление) |
+| `scripts/backup.sh`, `restore_test.sh` | Резервная копия и проверка восстановления (спека §6) |
+| `scripts/build_offline_bundle.sh`, `bundle_install.sh`, `registry_load.sh` | Офлайн-бандл: образы + compose + установщик + `SHA256SUMS`; внутренний registry |
+| `scripts/check_drift.py`, `validate_images.py` | Сверка compose/chart/копий конфигов с `images.yaml`; валидация манифеста |
+| `scripts/apply_and_push.sh`, `verify_image.sh`, `update_image_refs.py` | Запись в `images.yaml` ботом: проверка образа в GHCR, ретраи push |
+| `scripts/provision_vm.sh`, `install_autodeploy.sh` | Подготовка VM и systemd-таймер автодеплоя (demo/dev) |
+| `.github/workflows/docker-publish.yml` | Общий конвейер публикации образа (вызывается из backend/frontend) |
+| `.github/workflows/notify.yml` | Приём dispatch: проверка образа → стек с новым образом → коммит в `images.yaml` |
+| `.github/workflows/validate.yml` | yamllint, actionlint, shellcheck, hadolint, compose/helm, drift |
+| `.github/workflows/e2e.yml` | Стенд из образов + бэкап/восстановление; офлайн-бандл без сети (ночью и на релизе) |
+| `.github/workflows/build.yml` | Сборка образов моков |
+| `.github/workflows/release.yml` | На теге `vX.Y.Z`: e2e → бандл → подпись → GitHub Release |
+| `docs/ghcr-setup.md`, `docs/REPO-SETTINGS.md` | Ручные шаги (токены, GHCR) и настройки репозиториев организации |
 
-Realm Keycloak (`realm-crm.json`) и вспомогательные конфиги (`init-keycloak-db.sh`, `s3.json`) — копии из `backend/deploy/`, продублированы в `compose/` и `charts/rtk-crm/files/` независимо (не через общий источник в этом репозитории) — при правке realm в `backend` обновите обе копии.
+Realm Keycloak (`realm-crm.json`), `s3.json`, `init-keycloak-db.sh`, `Caddyfile` — копии из
+`backend/deploy/`; `check_drift.py --backend-dir` (job `drift`) падает, если копии разошлись.
 
 Реестр образов — GHCR (`ghcr.io/lct-testkit`), приватные пакеты.
 
 ## Локальная проверка перед пушем
 
 ```bash
+pip install -r scripts/requirements.txt
 python scripts/validate_images.py images.yaml
-python scripts/check_drift.py
+python scripts/check_drift.py --backend-dir ../backend
+python scripts/render_env_images.py > /tmp/env.images
+docker compose -f compose/docker-compose.yml --env-file compose/.env.example --env-file /tmp/env.images \
+  --profile integrations --profile registry config --quiet
 yamllint --strict -c .yamllint.yml .
-docker compose -f compose/docker-compose.yml --env-file compose/.env.example config --quiet
-helm lint charts/rtk-crm
+bash scripts/e2e_stack.sh --with-restore     # нужен docker login ghcr.io; ~5–8 минут
 ```
 
-Все пять также гоняются в CI (`validate.yml`) на каждый PR и push в `main`.
+Статические проверки гоняются в CI (`validate.yml`) на каждый PR; e2e — на PR, затрагивающие
+`compose/`, `scripts/`, `images.yaml`, а также ночью.

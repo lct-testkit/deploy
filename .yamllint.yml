@@ -8,8 +8,11 @@ ignore: |
 
 rules:
   line-length:
-    max: 120
+    # Длинные `uses: …@<sha> # vX.Y.Z`, URL и русские комментарии — норма;
+    # 120 нарушалось в десятке мест и роняло `yamllint --strict`.
+    max: 160
     level: warning
+    allow-non-breakable-inline-mappings: true
   comments:
     min-spaces-from-content: 1
   truthy:

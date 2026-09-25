@@ -1,0 +1,136 @@
+name: e2e
+
+# Сквозная проверка того, что реально важно заказчику:
+#   stack           — стек из образов images.yaml поднимается с нуля, проходит smoke,
+#                     бэкап → восстановление в чистый стенд → smoke (спека §6);
+#   offline-bundle  — собранный офлайн-бандл ставится на «чистой» машине БЕЗ доступа
+#                     к registry и интернету (критерий №5 паспорта проекта).
+#
+# Образы api/web в GHCR приватные — нужен секрет GHCR_PULL_TOKEN (classic PAT,
+# read:packages, см. docs/ghcr-setup.md). На PR из форков секретов нет — job
+# честно сообщает об этом и завершается, а не «зеленеет» молча.
+on:
+  pull_request:
+    paths:
+      - "compose/**"
+      - "scripts/**"
+      - "images.yaml"
+      - ".github/workflows/e2e.yml"
+  workflow_call: {}
+  workflow_dispatch: {}
+  schedule:
+    - cron: "30 2 * * *"
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  stack:
+    name: стек · smoke · бэкап → восстановление
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt
+
+      - name: GHCR_PULL_TOKEN задан?
+        id: token
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          if [ -z "${GHCR_PULL_TOKEN}" ]; then
+            echo "::warning::GHCR_PULL_TOKEN недоступен (PR из форка?) — e2e не выполнялся"
+            echo "have=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: steps.token.outputs.have == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
+
+      - name: Стенд из images.yaml (up → smoke → бэкап → восстановление → smoke)
+        if: steps.token.outputs.have == 'true'
+        run: bash scripts/e2e_stack.sh --with-restore
+
+  offline-bundle:
+    name: офлайн-бандл ставится без сети
+    # Тяжёлый (образы ~1–2 ГиБ): по расписанию, вручную и при изменении сборки бандла.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: scripts/requirements.txt
+
+      - run: pip install -r scripts/requirements.txt
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
+
+      - name: Собрать бандл
+        run: bash scripts/build_offline_bundle.sh "ci-${GITHUB_RUN_ID}" --out "${RUNNER_TEMP}/bundle"
+
+      - name: Распаковать и убрать ВСЕ образы («чистая машина»)
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/install"
+          tar -xzf "${RUNNER_TEMP}/bundle/rtk-crm-offline-ci-${GITHUB_RUN_ID}.tar.gz" -C "${RUNNER_TEMP}/install"
+          docker logout ghcr.io || true
+          docker system prune -af --volumes
+          test -z "$(docker images -aq)"
+
+      # Изоляция: dockerd работает от root, поэтому режем исходящий трафик root-процессов
+      # (pull образов) и трафик контейнеров наружу. Runner-агент работает от другого
+      # пользователя и остаётся на связи с GitHub.
+      - name: Отрезать сеть
+        run: |
+          set -euo pipefail
+          sudo iptables -I OUTPUT -m owner --uid-owner 0 ! -o lo -j DROP
+          sudo iptables -I DOCKER-USER -i br+ ! -o br+ -j DROP
+          sudo iptables -I DOCKER-USER -i docker0 ! -o docker0 -j DROP
+
+      - name: Проверка изоляции (pull обязан провалиться)
+        run: |
+          if timeout 40 docker pull hello-world >/dev/null 2>&1; then
+            echo "::error::сеть НЕ отрезана: docker pull сработал — тест был бы недействителен"
+            exit 1
+          fi
+          echo "изоляция подтверждена: docker pull не проходит"
+
+      - name: Установка из бандла (install.sh → smoke)
+        working-directory: ${{ runner.temp }}/install
+        run: |
+          cd "rtk-crm-offline-ci-${GITHUB_RUN_ID}"
+          bash install.sh --profile demo
+
+      - name: Логи при падении
+        if: failure()
+        working-directory: ${{ runner.temp }}/install
+        run: |
+          cd "rtk-crm-offline-ci-${GITHUB_RUN_ID}/compose" 2>/dev/null || exit 0
+          docker compose --env-file .env --env-file .env.images ps -a || true
+          docker compose --env-file .env --env-file .env.images logs --no-color --tail 80 || true

@@ -1,17 +1,36 @@
 # RUNBOOK — эксплуатация RTK School CRM
 
-Как поднять систему на реальном сервере (не на машине разработчика — для этого есть `backend/docker-compose.yml`, см. корневой README) и поддерживать её: провижининг VM, первый деплой, автодеплой, откат, офлайн-установка, бэкап/восстановление, Kubernetes. Все команды — с целевого сервера (Ubuntu/Debian, systemd), если не сказано иное.
+Как поднять систему на реальном сервере (не на машине разработчика — для этого есть `backend/docker-compose.yml`, см. корневой README) и поддерживать её: конвейер поставки, провижининг VM, первый деплой, автодеплой, откат, офлайн-установка, бэкап/восстановление, Kubernetes. Все команды — с целевого сервера (Ubuntu/Debian, systemd), если не сказано иное.
 
-## Два пути деплоя
+## Конвейер поставки (CI/CD целиком)
+
+```
+backend / frontend / rt-ui                                 deploy
+─────────────────────────                                  ──────
+PR  → lint · типы · тесты (+Postgres) · миграции ·          PR → yamllint · actionlint · shellcheck ·
+      контракт API · pip/npm audit · Trivy fs ·                  hadolint · compose config · helm lint ·
+      hadolint                                                   drift-проверка · e2e (стенд из образов)
+main → те же гейты, затем публикация образа:
+      build → Trivy → push → SBOM+provenance → cosign ──dispatch──► notify.yml:
+      (образ в GHCR только после чистого скана)                       1. образ есть в GHCR, digest = тег
+                                                                       2. стек с НОВЫМ образом поднимается, smoke зелёный
+                                                                       3. только после этого — коммит в images.yaml
+                                                                  автодеплой (VM, таймер) → бэкап → up --wait → smoke →
+                                                                       при провале — откат образов
+                                                                  тег vX.Y.Z → e2e (в т.ч. офлайн без сети) → бандл → подпись → Release
+```
+
+Единый источник истины по образам — `images.yaml`. В `compose/docker-compose.yml` нет ни одного литерала образа: каждый `image:` — переменная `<ИМЯ>_IMAGE`, которую `scripts/render_env_images.py` генерирует из манифеста (режимы `digest` — онлайн, `bundle` — офлайн-бандл, `registry` — внутренний registry контура). Без `.env.images` compose намеренно не запускается.
+
+## Три пути деплоя
 
 | Путь | Когда | Каталог |
 |---|---|---|
 | **docker compose** (рекомендуется для одного сервера) | Один хост, systemd есть, самый короткий путь от нуля до работающего стенда | `compose/` |
+| **Офлайн-бандл** | Закрытый контур без интернета | `scripts/build_offline_bundle.sh` → `install.sh` |
 | **Helm / Kubernetes** | Уже есть кластер и вы хотите катить это в него как обычное приложение | `charts/rtk-crm/` |
 
-Оба описывают ОДНУ и ту же систему (11 сервисов: Caddy, API, worker, миграции/сиды как одноразовые задачи, Keycloak, PostgreSQL, Redis, SeaweedFS, NTP, мок SMS-шлюза, веб-клиент) и оба тянут готовые образы из `ghcr.io/lct-testkit/*` — ничего не собирают на целевой машине. `images.yaml` в корне репозитория — единственный источник истины по тому, какой тег сейчас актуален; оба пути читают его (compose — через сгенерированный `.env.images`, Helm — через `values.yaml`, обновляемый тем же способом при релизе чарта).
-
-Третий путь — **офлайн-поставка** (архив с образами, без сети в рантайме) — раздел «Офлайн-установка» ниже; использует тот же `compose/`.
+Все описывают ОДНУ систему: Caddy, API, worker, миграции/сиды как одноразовые задачи, Keycloak, PostgreSQL, Redis, SeaweedFS, NTP, мок SMS-шлюза, веб-клиент (профиль `integrations` добавляет mock-lms/mock-cms, профиль `registry` — внутренний registry).
 
 ## Провижининг VM
 
@@ -21,71 +40,108 @@
 sudo bash scripts/provision_vm.sh
 ```
 
-Идемпотентен. Проверяет наличие Docker + `docker compose` (сам не ставит — установка Docker скриптом из интернета на root-правах через оператора этого репозитория осознанно не автоматизирована, слишком чувствительный шаг), заводит системного пользователя `deploy` (группа `docker`), каталоги `/srv/rtk-demo` и `/srv/rtk-dev` (два независимых compose-проекта — `rtk-demo` обновляется только автодеплоем и не трогается руками, `rtk-dev` можно ломать свободно для проверки), 2 ГБ swap.
+Идемпотентен. Проверяет наличие Docker + `docker compose` (сам не ставит), заводит системного пользователя `deploy` (группа `docker`; учтите — членство в `docker` равно root-доступу на хосте), каталоги `/srv/rtk-dev`, `/srv/rtk-demo`, `/srv/rtk-prod` (независимые compose-проекты `rtk-dev`/`rtk-demo`/`rtk-prod`), 2 ГБ swap.
 
-Дальше — `docs/ghcr-setup.md`: создать GitHub PAT с правом **только** `read:packages`, `docker login ghcr.io` под пользователем `deploy` на VM. Без этого `docker compose pull` откажет — пакеты `ghcr.io/lct-testkit/*` приватные.
+Дальше — `docs/ghcr-setup.md`: classic PAT с правом **только** `read:packages`, вход в GHCR под пользователем `deploy`: `echo <PAT> | docker login ghcr.io -u <user> --password-stdin`. Без этого `docker compose pull` откажет — пакеты `ghcr.io/lct-testkit/*` приватные.
 
 ## Первый деплой на VM
 
-Из-под пользователя `deploy`, для `rtk-demo` (для `rtk-dev` — то же самое с `RTK_ENV=dev` и в `/srv/rtk-dev`):
+Из-под пользователя `deploy`, для `rtk-demo` (для `dev`/`prod` — `RTK_ENV=dev|prod`):
 
 ```bash
 git clone https://github.com/lct-testkit/deploy.git /srv/rtk-demo/deploy
 cd /srv/rtk-demo/deploy
-cp compose/.env.example /srv/rtk-demo/.env
+RTK_ENV=demo scripts/deploy.sh --init --host crm.example.local          # секреты + runtime/ в /srv/rtk-demo
+RTK_ENV=dev  scripts/deploy.sh --init --port-offset 100                 # dev на соседних портах (8180/8543/…)
+RTK_ENV=prod scripts/deploy.sh --init --host crm.example.local --profile prod
+RTK_ENV=demo scripts/deploy.sh
 ```
 
-Откройте `/srv/rtk-demo/.env` и смените как минимум то, что помечено `# CHANGE ME` (пароли БД, секреты Keycloak, `SIGNATURE_SERVER_SECRET`, ключи S3) — раздел «Перед боевым контуром» ниже, полный список. Также выставьте `BASE_URL`/`KEYCLOAK_PUBLIC_URL`/`CRM_TLS_HOST` на реальное доменное имя сервера, если оно не `localhost`.
+`--init` (`scripts/gen_env.sh`) генерирует случайные секреты и, что важно, **согласованно** подставляет их в `.env`, в `runtime/keycloak/realm-crm.json` (client secret'ы) и в `runtime/seaweedfs/s3.json` (S3-ключи). Правка секретов только в `.env` приводила бы к рассинхрону: в демо-файлах они зашиты. `--port-offset` разводит порты нескольких окружений на одной машине. Демо-ПОЛЬЗОВАТЕЛИ realm остаются — до открытия доступа извне удалите их или смените пароли в консоли Keycloak.
+
+`deploy.sh` тянет образы (`images.yaml` → `.env.images`), поднимает стек (`up --wait`), гоняет `scripts/smoke.sh`. Проверка вручную:
 
 ```bash
-scripts/deploy.sh
-```
-
-Тянет образы (`images.yaml` → `.env.images`), поднимает стек. На чистой машине — минута-две, дольше всего стартует Keycloak. Проверка:
-
-```bash
-docker compose -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env --env-file /srv/rtk-demo/.env.images --project-directory /srv/rtk-demo ps
-curl http://localhost:8080/health/ready
+bash scripts/smoke.sh http://localhost:8080
 ```
 
 ## Автодеплой
 
-`rtk-demo` не обновляется руками (`git pull` + `docker compose up -d` каждый раз) — за это отвечает systemd-таймер:
+`demo` и `dev` не обновляются руками — за это отвечает systemd-таймер:
 
 ```bash
 sudo bash scripts/install_autodeploy.sh demo
 ```
 
-Ставит `rtk-demo-autodeploy.timer`, каждые 5 минут запускающий `scripts/deploy.sh` от имени `deploy`: `git pull` в самом `deploy`-репозитории (подтягивает и `compose/docker-compose.yml`, и свежий `images.yaml`, если тот успел обновиться), пересчитывает теги образов, `docker compose pull && up -d`. Идемпотентен — если ничего не изменилось, шаг `up -d` не трогает контейнеры.
+Каждые 5 минут `scripts/deploy.sh` (от имени `deploy`): `git pull`, пересчёт `.env.images`; если ничего не изменилось — выход. Иначе: **бэкап** (`scripts/backup.sh`, хранится 7 последних), pull, `up -d --wait`, **smoke**; при любом сбое образы возвращаются на предыдущие (`.env.images.prev`), проваленные ссылки сохраняются в `.env.images.failed`. **prod автодеплоем не обновляется** — только осознанным запуском `RTK_ENV=prod scripts/deploy.sh`.
 
-**Как новый образ доезжает досюда:** push в `backend`/`frontend` → их `build.yml` собирает и пушит образ в GHCR, затем шлёт `repository_dispatch` в этот репозиторий → `.github/workflows/notify.yml` проставляет новый tag/digest в `images.yaml` и коммитит → в течение 5 минут таймер на VM подхватывает через `git pull`. Никакого SSH из CI на сервер нет и не нужно — только read-only PAT на самой VM (раздел «Провижининг VM»). Полный цикл push → на проде — обычно 3–8 минут (время сборки образа + до 5 минут ожидания таймера).
-
-Проверить/прогнать вручную:
+**Как новый образ доезжает досюда:** push в `backend`/`frontend` → их `ci.yml` (гейты → сборка → Trivy → push → подпись) шлёт `repository_dispatch` в этот репозиторий → `notify.yml` проверяет, что образ существует и digest совпадает, **поднимает стек с новым образом и гоняет smoke**, и только тогда коммитит tag/digest в `images.yaml` → таймер на VM подхватывает через `git pull`. SSH из CI на сервер нет и не нужно — только read-only PAT на самой VM.
 
 ```bash
 systemctl status rtk-demo-autodeploy.timer
-sudo systemctl start rtk-demo-autodeploy.service   # прогнать прямо сейчас, не дожидаясь таймера
+sudo systemctl start rtk-demo-autodeploy.service   # прогнать прямо сейчас
 journalctl -u rtk-demo-autodeploy.service -f
 ```
 
 ## Обновление вручную и откат
 
-Вне автодеплоя (например, на `rtk-dev`, где таймер не ставится):
-
 ```bash
-cd /srv/rtk-dev/deploy && RTK_ENV=dev scripts/deploy.sh
+RTK_ENV=dev scripts/deploy.sh              # обновить
+RTK_ENV=demo scripts/deploy.sh rollback    # вернуть образы предыдущего успешного деплоя
 ```
 
-**Откат** — `images.yaml` версионируется в git, поэтому предыдущий известный рабочий тег всегда достижим:
+**Важно:** миграции Alembic идут только вперёд. Откат образов не откатывает схему БД. Если новая ревизия успела применить необратимые миграции, восстановление — из бэкапа, снятого перед выкладкой (`/srv/rtk-<env>/backups/…`, путь печатает `deploy.sh`): сначала проверьте бэкап `scripts/restore_test.sh`, затем восстановите его в боевую БД (см. ниже).
+
+Откат к произвольному коммиту `images.yaml`: `git -C <deploy> checkout <commit> -- images.yaml && RTK_ENV=… scripts/deploy.sh --no-pull`, потом `git checkout main -- images.yaml`, иначе следующий автодеплой перезапишет откат.
+
+## Офлайн-установка (закрытый контур)
+
+Каждый тег `vX.Y.Z` публикует в GitHub Releases бандл со ВСЕМИ образами, compose, скриптами и `SHA256SUMS`. Релиз выходит только если e2e зелёный, включая **установку бандла на машине без сети** (`.github/workflows/e2e.yml`).
+
+На машине с доступом (или на любой, куда скачаете релиз):
 
 ```bash
-git -C /srv/rtk-demo/deploy log --oneline -- images.yaml   # найти коммит ДО проблемного
-git -C /srv/rtk-demo/deploy checkout <commit> -- images.yaml
-RTK_ENV=demo /srv/rtk-demo/deploy/scripts/deploy.sh
-git -C /srv/rtk-demo/deploy checkout main -- images.yaml   # вернуть HEAD, иначе следующий автодеплой перезапишет откат
+sha256sum -c rtk-crm-offline-vX.Y.Z.tar.gz.sha256                 # целостность
+cosign verify-blob rtk-crm-offline-vX.Y.Z.tar.gz.sha256 \
+  --bundle rtk-crm-offline-vX.Y.Z.tar.gz.sha256.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/lct-testkit/deploy/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com   # происхождение (нужен cosign)
 ```
 
-Учтите: откат образа `api` не откатывает применённые миграции БД — Alembic только накатывает вперёд (см. «Ранбук» в корневом README, раздел «Обновление» — то же ограничение).
+Перенос на изолированную машину (Docker и `docker compose` там уже стоят) и установка:
+
+```bash
+tar xzf rtk-crm-offline-vX.Y.Z.tar.gz && cd rtk-crm-offline-vX.Y.Z
+bash install.sh --profile demo                                    # или: --profile prod --host crm.example.local
+```
+
+`install.sh`: `sha256sum -c SHA256SUMS` (при расхождении — стоп до загрузки образов) → `docker load` → генерация секретов → `up --wait --pull never` (docker **не ходит** в сеть) → smoke. Если архив нарезан на части (лимит вложения 2 ГиБ): `cat rtk-crm-offline-*.tar.gz.part-* > rtk-crm-offline.tar.gz`. Проверка подписи для air-gap: вместе с `cosign` понадобится доверенный корень Sigstore (`cosign initialize --mirror …`), либо сверяйте `.sha256` с копией, полученной по независимому каналу.
+
+**Внутренний registry** (обновления без ручного переноса архивов): `bash install.sh --registry` поднимает `registry:2` на `localhost:5000` и заливает в него образы. На остальных машинах контура:
+
+```bash
+python3 scripts/render_env_images.py --mode registry --registry registry.local:5000 > /srv/rtk-demo/.env.images
+```
+
+Собрать бандл самостоятельно (нужен доступ к GHCR и `docker login`): `scripts/build_offline_bundle.sh [версия]`.
+
+## Резервное копирование и восстановление
+
+```bash
+bash scripts/backup.sh --env-file /srv/rtk-demo/.env --images-env /srv/rtk-demo/.env.images \
+                       --project rtk-demo --out /srv/rtk-demo/backups
+```
+
+Снимает: роли кластера (`pg_dumpall --roles-only` — без них права `crm_app` не восстановятся), базы `crm` и `keycloak`, том SeaweedFS, счётчики строк, `SHA256SUMS`. **Непроверенный бэкап не существует:**
+
+```bash
+bash scripts/restore_test.sh --backup /srv/rtk-demo/backups/<каталог> \
+     --env-file /srv/rtk-demo/.env --images-env /srv/rtk-demo/.env.images
+```
+
+Поднимает чистый изолированный стенд (проект `rtk-restore-test`, порты 18080/…), восстанавливает базы, сверяет число строк (в каждой таблице не меньше, чем было до дампа), поднимает весь стек и гоняет smoke. Ночью то же делает `e2e.yml`. Целевые RTO 4 ч, RPO 15 мин (спека §6): дневной `pg_dump` даёт RPO сутки — для 15 минут добавьте WAL-архивирование (в этом репозитории не реализовано).
+
+Для Kubernetes-пути — `kubectl exec` в под `postgres-0` тем же `pg_dump`/`pg_dumpall`, файлы SeaweedFS — снапшот PVC.
 
 ## Kubernetes / Helm
 
@@ -93,58 +149,34 @@ git -C /srv/rtk-demo/deploy checkout main -- images.yaml   # вернуть HEAD
 helm install rtk-crm charts/rtk-crm -n rtk-crm --create-namespace \
   --set secrets.postgresPassword=<реальный-пароль> \
   --set secrets.signatureServerSecret=<реальный-секрет>
-  # остальные секреты — см. values.yaml, все с дефолтами для демо и комментарием "CHANGE ME"
 ```
 
-Полный список переопределяемых значений — `charts/rtk-crm/values.yaml` (образы/теги, реплики, ресурсы, размеры PVC, `ingress.enabled`). Обновление — `helm upgrade rtk-crm charts/rtk-crm -n rtk-crm -f <ваш values-оverride>`; откат — `helm rollback rtk-crm <ревизия>`. `migrate`/`seed` идут Helm-хуками `pre-install,pre-upgrade` — следят за ними `kubectl get jobs -n rtk-crm`. Автодеплоя (push → новый образ → сам себя обновил) для Helm-пути в этом репозитории нет — актуальный тег в `values.yaml` обновляет тот же `notify.yml`, но накатить `helm upgrade` после этого — ручной шаг (или заведите свой ArgoCD/Flux поверх — чарт для этого готов, GitOps-контроллер — решение оператора кластера, не этого репозитория).
-
-## Офлайн-установка
-
-Для контура без доступа к GHCR/интернету в рантайме (rtk_requiriments.md — сервис рассчитан на закрытый контур). Каждый тег `vX.Y.Z` этого репозитория публикует архив со всеми образами в GitHub Releases:
-
-```bash
-curl -LO https://github.com/lct-testkit/deploy/releases/download/vX.Y.Z/rtk-crm-offline-vX.Y.Z.tar.gz
-tar xzf rtk-crm-offline-*.tar.gz && cd rtk-crm-offline-*
-bash install.sh
-```
-
-`install.sh` делает `docker load` (образы уже внутри архива, сеть не нужна), копирует `.env` из примера, поднимает стек. Docker + `docker compose`-плагин на целевой машине нужно поставить заранее (единственный шаг, где нужна сеть — до переноса на изолированную машину). Собрать бандл самостоятельно (например, промежуточную сборку без ожидания релиза):
-
-```bash
-scripts/build_offline_bundle.sh
-```
-
-## Резервное копирование и восстановление
-
-Тот же набор данных, что в «Ранбук» корневого README (PostgreSQL — базы `crm` и `keycloak`, файлы SeaweedFS), только пути другие — `/srv/rtk-demo` вместо `backend/`:
-
-```bash
-docker compose -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env --project-directory /srv/rtk-demo \
-  exec -T postgres pg_dump -U crm -Fc crm > crm.dump
-```
-
-Для Kubernetes-пути — `kubectl exec` в под `postgres-0` тем же `pg_dump`, файлы SeaweedFS — снапшот PVC средствами вашего кластера (CSI-снапшоты, если провайдер их поддерживает) или тот же `tar` через временный под с примонтированным PVC.
+Полный список значений — `charts/rtk-crm/values.yaml`. Обновление — `helm upgrade`, откат — `helm rollback`. **Статус:** чарт проходит `helm lint` и kubeconform, drift-проверку против `images.yaml`, но реальная установка в кластер в CI пока не гоняется; первая установка `helm install` может упереться в порядок хуков `migrate`/`seed` (`pre-install` выполняется раньше создания postgres) — используйте `helm upgrade --install` поверх уже созданной БД либо считайте Helm-путь экспериментальным. Основной поддерживаемый путь — compose. Известный долг чарта: у workload'ов нет `securityContext` (`runAsNonRoot`, `readOnlyRootFilesystem`, `capabilities.drop`) — Trivy misconfig даёт KSV-0118 и родственные; добавлять их нужно по одному образу с проверкой в кластере (postgres/keycloak/seaweedfs пишут в свои тома под конкретными UID), поэтому в CI misconfig-скан чарта не включён.
 
 ## Перед боевым контуром
 
-Все значения по умолчанию (`compose/.env.example`, `values.yaml`) — демонстрационные, встречаются в открытом репозитории. Обязательно сменить: пароли PostgreSQL (`POSTGRES_PASSWORD`, `CRM_APP_PASSWORD`), пароль консоли Keycloak (`KEYCLOAK_ADMIN_PASSWORD`), секреты клиентов OIDC (`KEYCLOAK_CLIENT_SECRET`, `KEYCLOAK_ADMIN_CLIENT_SECRET`), `SIGNATURE_SERVER_SECRET` (HMAC-метка целостности ПЭП), ключи SeaweedFS S3 (`S3_ACCESS_KEY`/`S3_SECRET_KEY`), пароли демо-учёток Keycloak (или удалить их из realm — `APP_MODE=prod` у образа `web` и так прячет форму выбора демо-роли, но сами учётки в Keycloak при этом остаются активны, если их не отключить отдельно). Подробное обоснование каждой переменной — `backend/README.md` в основном репозитории.
+Используйте `deploy.sh --init --profile prod` — он сам генерирует все секреты и не оставляет демо-значений в `.env`, `realm-crm.json`, `s3.json`; `deploy.sh` для `RTK_ENV=prod` отказывается стартовать с демо-секретами, а образ api при `APP_PROFILE=prod` не запустится с демо-значениями `SIGNATURE_SERVER_SECRET`, `KEYCLOAK_*_SECRET`, `S3_*`, `CRM_APP_PASSWORD`. Остаётся вручную: удалить/отключить демо-учётки в Keycloak, задать публичное имя сервера (`--host`), TLS-сертификат вместо `tls internal`.
 
 ## Мониторинг и логи
 
 ```bash
-docker compose -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env --project-directory /srv/rtk-demo logs -f api
+docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env \
+  --env-file /srv/rtk-demo/.env.images logs -f api
 ```
 
-`api`/`keycloak` отдают Prometheus-метрики на `/metrics` изнутри сети (Caddy отдаёт `404` наружу сознательно) — сборщика (Prometheus/Grafana) в `compose/`/чарте нет, только сами эндпоинты; подключение реального стека мониторинга — за пределами этого репозитория. Ротация логов на VM — `json-file` с ограничением (см. `compose/docker-compose.yml`); в Kubernetes ротацию логов контейнеров делает сам kubelet.
+`api`/`keycloak` отдают Prometheus-метрики на `/metrics` изнутри сети — сборщика в `compose/`/чарте нет (только эндпоинты). Ротация логов — `json-file` 10 МБ × 3.
 
 ## Устранение неполадок
 
 | Симптом | Причина / что делать |
 |---|---|
+| `compose` пишет `required variable API_IMAGE is missing` | Не передан `.env.images`: `python3 scripts/render_env_images.py > .env.images` (или `deploy.sh`) |
 | `docker compose pull` в `deploy.sh`: `unauthorized` | PAT на VM истёк или не логинились — `docs/ghcr-setup.md` п.1 |
-| Таймер есть, но образы не обновляются | `journalctl -u rtk-demo-autodeploy.service` — скорее всего `git pull` в `/srv/rtk-demo/deploy` конфликтует (кто-то правил файлы в чекауте руками — не делайте так, это авто-обновляемый чекаут) |
-| `render_env_images.py` предупреждает `tag пуст` | `images.yaml` ещё не обновлён свежей сборкой — CI backend/frontend не запускался или `DEPLOY_DISPATCH_TOKEN` не настроен (`docs/ghcr-setup.md` п.3) |
-| `helm lint`/`helm template` не проходит после правки чарта | `helm template charts/rtk-crm \| kubeconform -strict` локально, тот же шаг гоняет `validate.yml` |
-| Нужно сравнить, что сейчас реально задеплоено | `docker compose ... images` (compose) или `kubectl get pods -n rtk-crm -o jsonpath='{.items[*].spec.containers[*].image}'` (Helm) — сверить тег с `images.yaml` |
+| Таймер есть, но образы не обновляются | `journalctl -u rtk-demo-autodeploy.service` — конфликт `git pull` (не правьте файлы в чекауте руками) или `notify.yml` не прошёл (стек с новым образом не поднялся — смотрите его лог) |
+| CI backend/frontend красный на шаге «Уведомить deploy» | `DEPLOY_DISPATCH_TOKEN` не задан (`docs/ghcr-setup.md` п.4) — образ уже в GHCR, но манифест не обновится |
+| После деплоя откат образов, но схема БД «новее» кода | Миграции необратимы — восстановление из бэкапа перед выкладкой (см. выше) |
+| Keycloak: вход не работает после смены секретов | Секреты меняли только в `.env`: используйте `gen_env.sh` (правит `.env`, realm и `s3.json` согласованно) |
+| `up --wait` падает на seaweedfs на холодном старте | Проверьте `docker compose logs seaweedfs`; у healthcheck есть `start_period: 40s`, на очень медленных дисках увеличьте |
+| Нужно сравнить, что реально задеплоено | `docker compose ... images` — сверить тег/digest с `images.yaml` |
 
-Остальные симптомы (502 на `/api`, долгий старт Keycloak, сертификат `:8443`) — те же, что у локального стенда, см. «Устранение неполадок» в корневом README — deploy-специфичного там нет, только адреса/пути другие.
+Остальные симптомы (502 на `/api`, долгий старт Keycloak, сертификат `:8443`) — те же, что у локального стенда, см. «Устранение неполадок» в корневом README backend.
