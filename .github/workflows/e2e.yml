@@ -112,6 +112,12 @@ jobs:
           sudo iptables -I OUTPUT -m owner --uid-owner 0 ! -o lo -j DROP
           sudo iptables -I DOCKER-USER -i br+ ! -o br+ -j DROP
           sudo iptables -I DOCKER-USER -i docker0 ! -o docker0 -j DROP
+          # Опубликованные порты (localhost:8080 -> контейнер) пробрасывает docker-proxy: это процесс root, и его трафик
+          # в контейнеры идёт через docker-мосты. Это ЛОКАЛЬНЫЙ трафик, режем только то, что уходит за пределы хоста.
+          # Правила вставляются последними, значит стоят выше DROP и срабатывают первыми.
+          sudo iptables -I OUTPUT -o br+ -j ACCEPT
+          sudo iptables -I OUTPUT -o docker0 -j ACCEPT
+          sudo iptables -L OUTPUT -n -v --line-numbers
 
       - name: Проверка изоляции (pull обязан провалиться)
         run: |

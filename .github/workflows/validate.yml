@@ -37,7 +37,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Статический анализ workflow (включая проверку выражений и shellcheck)
-        run: docker run --rm -v "$PWD:/repo" -w /repo "${ACTIONLINT_IMAGE}" -color
+        run: |
+          bash scripts/pull_retry.sh "${ACTIONLINT_IMAGE}"
+          docker run --rm -v "$PWD:/repo" -w /repo "${ACTIONLINT_IMAGE}" -color
 
   images-manifest:
     name: images.yaml
@@ -62,6 +64,7 @@ jobs:
       - name: hadolint по всем Dockerfile
         run: |
           set -uo pipefail
+          bash scripts/pull_retry.sh "${HADOLINT_IMAGE}"
           mapfile -t files < <(git ls-files '*Dockerfile' '*Dockerfile.*' '*.Dockerfile')
           if [ ${#files[@]} -eq 0 ]; then
             echo "::error::Dockerfile не найдены — проверка ничего не проверяет"
@@ -130,7 +133,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: shellcheck scripts/*.sh
-        run: docker run --rm -v "$PWD:/mnt" -w /mnt "${SHELLCHECK_IMAGE}" shellcheck -x -S warning scripts/*.sh
+        run: |
+          bash scripts/pull_retry.sh "${SHELLCHECK_IMAGE}"
+          docker run --rm -v "$PWD:/mnt" -w /mnt "${SHELLCHECK_IMAGE}" shellcheck -x -S warning scripts/*.sh
 
   helm:
     name: helm lint + kubeconform
@@ -144,6 +149,7 @@ jobs:
       - name: Проверка чарта и отрендеренных манифестов
         run: |
           set -euo pipefail
+          bash scripts/pull_retry.sh "${KUBECONFORM_IMAGE}"
           helm lint charts/rtk-crm
           helm template charts/rtk-crm \
             | docker run --rm -i "${KUBECONFORM_IMAGE}" -strict -summary -
