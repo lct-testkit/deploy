@@ -97,7 +97,7 @@ jobs:
           ls -la
 
       - name: Опубликовать релиз
-        uses: softprops/action-gh-release@e598afbe1493e6b1bafb1f389cabb956eab91231 # v3.0.3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           # На push тега action сам находит тег из GITHUB_REF; на workflow_dispatch
           # (ручной ретрай без нового тега) реф-тега нет — без этого падает
