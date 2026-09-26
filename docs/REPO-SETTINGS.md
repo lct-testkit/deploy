@@ -11,7 +11,7 @@
 
 | Настройка | Где | Зачем |
 |---|---|---|
-| Ruleset `protect-main` | все 4 репозитория | Запрет удаления и force-push, линейная история, слияние только через PR с одним одобрением (ревью владельцев кода включите после создания команды из `CODEOWNERS` — `require_code_owner_review` в скрипте), все обязательные проверки зелёные и ветка актуальна |
+| Ruleset `protect-main` | `backend`, `frontend`, `rt-ui`, `deploy` (репозиторий `.github` скриптом не покрыт) | Запрет удаления и force-push, линейная история, слияние только через PR с одним одобрением (ревью владельцев кода включите после создания команды из `CODEOWNERS` — `require_code_owner_review` в скрипте), все обязательные проверки зелёные и ветка актуальна |
 | Обязательные проверки | ruleset | Имена = `name:` job'ов в workflows. Если переименуете job — обновите список в скрипте |
 | Обход | все; бот — только `deploy` | Администраторы репозитория могут смержить PR без одобрения (иначе в команде из одного человека PR не смержить); в `deploy` GitHub Actions (integration 15368) пишет `images.yaml` прямо в `main` (`notify.yml`). Число одобрений — `REQUIRED_APPROVALS=0 bash scripts/apply_repo_settings.sh --apply` |
 | Secret scanning + push protection | все (только с GitHub Advanced Security) | Токен не попадает в историю даже случайно. В приватных репозиториях функция платная: без неё скрипт пропускает шаг с предупреждением, а секреты в коде ловит Trivy в CI |
@@ -27,7 +27,6 @@
 | `DEPLOY_DISPATCH_TOKEN` | `backend`, `frontend` | Fine-grained PAT, только репозиторий `deploy`, `Contents: Read and write` (нужен для `repository_dispatch`) |
 | `GHCR_PULL_TOKEN` | `deploy` | **Classic** PAT, scope `read:packages` (GHCR не поддерживает fine-grained) — чтение приватных образов `api`/`web` в `notify.yml`, `e2e.yml`, `release.yml` |
 | `BACKEND_READ_TOKEN` | `deploy`, `frontend` (опционально) | Fine-grained PAT, только чтение `backend` (`Contents: Read`): `deploy` сверяет копии конфигов (job `drift`), `frontend` — свой контракт API с `backend@main`; без него эти сверки пропускаются с предупреждением |
-| `NODE_AUTH_TOKEN` | `frontend` | Токен чтения GitHub Packages (`@lct-testkit/rt-ui`), см. раздел «rt-ui» ниже |
 
 Подробности по токенам и GHCR — [`ghcr-setup.md`](ghcr-setup.md).
 
@@ -56,4 +55,3 @@
 1. Применить настройки: `bash scripts/apply_repo_settings.sh --apply`.
 2. Создать секреты из таблицы выше.
 3. Удалить устаревшую ветку бота: `git push origin --delete bot/update-images-35271171079` (в `deploy`).
-4. Выбрать лицензию (`frontend/README.md` прямо говорит, что её нет).
