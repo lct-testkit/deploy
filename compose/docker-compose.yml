@@ -106,8 +106,9 @@ services:
       - "yes"
       - --maxmemory
       - 512mb
+      # Не вытеснять ничего: `volatile-lru` выбрасывал сессии и ключи идемпотентности (у них есть TTL).
       - --maxmemory-policy
-      - volatile-lru
+      - noeviction
     volumes:
       - redis_data:/data
     healthcheck:
@@ -325,6 +326,8 @@ services:
       - "${S3_PROXY_PORT:-8333}:8333"
     environment:
       S3_ORIGIN: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:8333}
+      # Адреса, которым видна консоль администратора Keycloak (см. Caddyfile); по умолчанию — закрытые сети.
+      ADMIN_CONSOLE_ALLOW: ${ADMIN_CONSOLE_ALLOW:-private_ranges}
       WEB_UPSTREAM: ${WEB_UPSTREAM:-web:3000}
       CSP_SCRIPT_SRC: ${CSP_SCRIPT_SRC:-'self'}
       CRM_TLS_HOST: ${CRM_TLS_HOST:-localhost}

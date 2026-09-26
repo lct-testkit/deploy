@@ -51,7 +51,7 @@ spec:
             # Сессии и идемпотентность терять нельзя, поэтому вытесняем
             # только ключи с выставленным TTL (1:1 с backend/docker-compose.yml).
             - --maxmemory-policy
-            - volatile-lru
+            - noeviction
           ports:
             - name: redis
               containerPort: 6379
