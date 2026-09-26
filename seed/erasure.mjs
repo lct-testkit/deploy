@@ -23,7 +23,7 @@ async function contact(last, first) {
 	const found = await call('admin', 'GET', `/api/contacts?q=${encodeURIComponent(last)}&limit=5`);
 	const hit = found.json?.items?.find((c) => c.last_name === last);
 	if (hit) return hit;
-	const made = await call('admin', 'POST', '/api/contacts', { last_name: last, first_name: first, position: 'Демо-контакт для удаления', email: `${last.toLowerCase()}@example.test` });
+	const made = await call('admin', 'POST', '/api/contacts', { last_name: last, first_name: first, position: 'Демо-контакт для удаления', email: `erasure-${Buffer.from(last).toString('hex').slice(0, 8)}@example.ru` });
 	if (made.status >= 300) throw new Error(`create contact ${last}: ${made.status} ${JSON.stringify(made.json)}`);
 	return made.json;
 }

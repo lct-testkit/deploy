@@ -520,7 +520,10 @@ async function main() {
 
 	console.log('Сделки…');
 	const created = [];
-	for (const [who, type, party, title, amount, students, priority, target, closeDays] of DEALS) {
+	for (const [plannedWho, type, party, title, amount, students, priority, target, closeDays] of DEALS) {
+		// Менеджер не может завести сделку на чужую организацию (бэкенд отвечает 404, как для несуществующей): если организацию
+		// ведёт руководитель, сделку по ней заводит он. Организации руководителя — только МОУПН и УФИИ (`ownerOf` выше).
+		const who = type === 'b2b' && plannedWho === 'kam' && ownerByShort[party] === 'head' ? 'head' : plannedWho;
 		const found = await get(who, `/api/deals?q=${encodeURIComponent(title)}&limit=5`);
 		if (found.items.some((d) => d.title === title)) continue;
 		const org = type === 'b2b' ? orgsByShort[party] : null;
