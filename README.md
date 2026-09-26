@@ -26,11 +26,13 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `charts/rtk-crm/` | Helm-чарт (та же топология); проверяется lint + kubeconform + drift |
 | `mocks/lms`, `mocks/cms` | Заглушки внешних контрактов (LMS, Laravel CMS), профиль compose `integrations` |
 | `scripts/render_env_images.py` | `images.yaml` → `.env.images` (режимы `digest` / `bundle` / `registry`) |
-| `scripts/gen_env.sh` | Секреты + согласованные `runtime/keycloak/realm-crm.json` и `runtime/seaweedfs/s3.json`; `--host`, `--port-offset` |
+| `scripts/gen_env.sh`, `lib_host.sh` | Секреты + согласованные `runtime/keycloak/realm-crm.json` и `runtime/seaweedfs/s3.json`; `--host`, `--tls off\|internal\|acme`, `--fonts`, `--port-offset`. `lib_host.sh` — общие функции адреса и режима TLS |
+| `scripts/set_host.sh` | Смена адреса и режима TLS у установленного стенда: `.env`, realm, адреса клиента в БД Keycloak, перезапуск |
 | `scripts/deploy.sh` | Деплой окружения (`--init`, `rollback`): бэкап → `up --wait` → smoke → автооткат |
 | `scripts/smoke.sh`, `e2e_stack.sh` | Дымовая проверка и сквозной сценарий стенда (up → smoke → бэкап → восстановление) |
 | `scripts/backup.sh`, `restore_test.sh` | Резервная копия и проверка восстановления (спека §6) |
-| `scripts/build_offline_bundle.sh`, `bundle_install.sh`, `registry_load.sh` | Офлайн-бандл: образы + compose + установщик + `SHA256SUMS`; внутренний registry |
+| `scripts/build_offline_bundle.sh`, `bundle_install.sh`, `registry_load.sh` | Офлайн-бандл: образы + compose + установщик + `SHA256SUMS`; внутренний registry. `install.sh` спрашивает окружение (demo/prod), адрес и нужны ли моковые данные |
+| `seed/`, `scripts/seed_demo.sh`, `sync_seed.sh` | Моковые данные демо-стенда (профиль compose `demo-data`): три скрипта в контейнере node, копии из `frontend/tools`; `sync_seed.sh` их обновляет/сверяет |
 | `scripts/check_drift.py`, `validate_images.py` | Сверка compose/chart/копий конфигов с `images.yaml`; валидация манифеста |
 | `scripts/apply_and_push.sh`, `verify_image.sh`, `update_image_refs.py` | Запись в `images.yaml` ботом: проверка образа в GHCR, ретраи push |
 | `scripts/provision_vm.sh`, `install_autodeploy.sh` | Подготовка VM и systemd-таймер автодеплоя (demo/dev) |
@@ -55,7 +57,7 @@ python scripts/validate_images.py images.yaml
 python scripts/check_drift.py --backend-dir ../backend
 python scripts/render_env_images.py > /tmp/env.images
 docker compose -f compose/docker-compose.yml --env-file compose/.env.example --env-file /tmp/env.images \
-  --profile integrations --profile registry config --quiet
+  --profile integrations --profile registry --profile demo-data config --quiet
 yamllint --strict -c .yamllint.yml .
 bash scripts/e2e_stack.sh --with-restore     # нужен docker login ghcr.io; ~5–8 минут
 ```

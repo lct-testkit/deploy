@@ -2,11 +2,18 @@
 # Генерирует боевые секреты и согласованные с ними runtime-конфиги.
 #
 #   bash scripts/gen_env.sh [--dir compose] [--state-dir <каталог>] [--profile demo|prod]
-#                           [--host <имя/IP>] [--port-offset N] [--force]
+#                           [--host <имя/IP>] [--tls off|internal|acme] [--fonts <каталог>]
+#                           [--port-offset N] [--force]
+#
+#   --tls    off (по умолчанию): локальный стенд, http://ХОСТ:8080 и https://ХОСТ:8443 с самоподписанным сертификатом;
+#            internal: HTTPS на 443 с самоподписанным сертификатом Caddy (закрытый контур, IP, внутренние имена);
+#            acme: HTTPS на 443 с сертификатом Let's Encrypt (публичный домен, DNS на этот сервер, порты 80/443 из интернета).
+#            internal и acme требуют --host и несовместимы с --port-offset (порты 80/443/8333 фиксированы).
+#   --fonts  каталог с *.woff шрифтов Rostelecom Basis (лицензионные, в образ web не входят): копируются в runtime/fonts.
 #
 # Читает шаблоны из --dir (по умолчанию compose/ рядом со скриптом) и создаёт в
 # --state-dir (по умолчанию = --dir; на VM — /srv/rtk-<env>):
-#   .env                              — из .env.example, секреты заменены случайными
+#   .env                              — из .env.example, секреты заменены случайными, порты/URL/TLS по --host и --tls
 #   runtime/keycloak/realm-crm.json   — демо-realm с теми же client secret'ами
 #   runtime/seaweedfs/s3.json         — S3-ключи, совпадающие с .env
 #
@@ -24,10 +31,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib_host.sh
+source "${SCRIPT_DIR}/lib_host.sh"
 TARGET_DIR="${SCRIPT_DIR}/../compose"
 STATE_DIR=""
 PROFILE="demo"
 HOST=""
+TLS_MODE="off"
+FONTS_SRC=""
 PORT_OFFSET=0
 FORCE=0
 
@@ -37,14 +48,22 @@ while [[ $# -gt 0 ]]; do
     --state-dir) STATE_DIR="$2"; shift 2 ;;
     --profile) PROFILE="$2"; shift 2 ;;
     --host) HOST="$2"; shift 2 ;;
+    --tls) TLS_MODE="$2"; shift 2 ;;
+    --fonts) FONTS_SRC="$2"; shift 2 ;;
     --port-offset) PORT_OFFSET="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo pipefail/!p}' "$0"; exit 0 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
 done
 
 case "${PROFILE}" in demo|prod) ;; *) echo "--profile: demo|prod" >&2; exit 2 ;; esac
+case "${PORT_OFFSET}" in ''|*[!0-9]*) echo "--port-offset: нужно неотрицательное целое" >&2; exit 2 ;; esac
+rtk_check_mode "${TLS_MODE}" "${HOST}" "${PORT_OFFSET}" || exit 2
+if [[ -n "${FONTS_SRC}" ]]; then
+  [[ -d "${FONTS_SRC}" ]] || { echo "--fonts: нет каталога ${FONTS_SRC}" >&2; exit 2; }
+  compgen -G "${FONTS_SRC}/*.woff*" >/dev/null || { echo "--fonts: в ${FONTS_SRC} нет *.woff/*.woff2" >&2; exit 2; }
+fi
 
 # abspath: абсолютный путь. `pwd -W` (Git Bash на Windows) даёт C:/… — именно такой путь понимает
 # нативный docker.exe для bind-mount'ов; на Linux `pwd -W` не существует и берётся обычный pwd.
@@ -84,14 +103,7 @@ CMS_WEBHOOK_SECRET="$(rand 40)"
 cp "${EXAMPLE}" "${ENV_FILE}"
 
 # set_var KEY VALUE — заменяет `KEY=...`; если ключа нет — дописывает.
-set_var() {
-  local key="$1" value="$2"
-  if grep -qE "^${key}=" "${ENV_FILE}"; then
-    sed -i "s|^${key}=.*|${key}=${value}|" "${ENV_FILE}"
-  else
-    printf '%s=%s\n' "${key}" "${value}" >> "${ENV_FILE}"
-  fi
-}
+set_var() { rtk_env_set "${ENV_FILE}" "$1" "$2"; }
 
 set_var APP_PROFILE "${PROFILE}"
 set_var POSTGRES_PASSWORD "${POSTGRES_PASSWORD}"
@@ -105,29 +117,15 @@ set_var S3_SECRET_KEY "${S3_SECRET_KEY}"
 set_var CMS_WEBHOOK_SECRET "${CMS_WEBHOOK_SECRET}"
 [[ "${PROFILE}" == "prod" ]] && set_var APP_MODE prod
 
-# Порты: несколько окружений на одной машине (dev/demo/prod) различаются смещением.
-HTTP_PORT=$((8080 + PORT_OFFSET))
-HTTPS_PORT=$((8443 + PORT_OFFSET))
-S3_PORT=$((8333 + PORT_OFFSET))
-PUBLIC_HOST="${HOST:-localhost}"
-set_var HTTP_PORT "${HTTP_PORT}"
-set_var HTTPS_PORT "${HTTPS_PORT}"
-set_var S3_PROXY_PORT "${S3_PORT}"
-set_var POSTGRES_PORT "$((5433 + PORT_OFFSET))"
-set_var BASE_URL "http://${PUBLIC_HOST}:${HTTP_PORT}"
-set_var KEYCLOAK_PUBLIC_URL "http://${PUBLIC_HOST}:${HTTP_PORT}/auth"
-set_var S3_PUBLIC_ENDPOINT_URL "http://${PUBLIC_HOST}:${S3_PORT}"
-[[ -n "${HOST}" ]] && set_var CRM_TLS_HOST "${HOST}"
+# Порты, адреса и TLS-переменные Caddy по режиму (--tls) и хосту. В режиме off несколько окружений на одной
+# машине (dev/demo/prod) различаются смещением портов.
+rtk_apply_mode_env "${ENV_FILE}" "${TLS_MODE}" "${HOST}" "${PORT_OFFSET}"
 
 # --- runtime-конфиги с теми же секретами ---------------------------------------
 mkdir -p "${RUNTIME}/keycloak" "${RUNTIME}/seaweedfs"
 
-sed \
-  -e "s|crm-bff-secret|${KEYCLOAK_CLIENT_SECRET}|g" \
-  -e "s|crm-admin-secret|${KEYCLOAK_ADMIN_CLIENT_SECRET}|g" \
-  -e "s|//localhost:8080|//${PUBLIC_HOST}:${HTTP_PORT}|g" \
-  -e "s|//localhost:8443|//${PUBLIC_HOST}:${HTTPS_PORT}|g" \
-  "${TARGET_DIR}/keycloak/realm-crm.json" > "${RUNTIME}/keycloak/realm-crm.json"
+rtk_render_realm "${TARGET_DIR}/keycloak/realm-crm.json" "${RUNTIME}/keycloak/realm-crm.json" \
+  "${KEYCLOAK_CLIENT_SECRET}" "${KEYCLOAK_ADMIN_CLIENT_SECRET}" "${TLS_MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}"
 
 sed \
   -e "s|crm_sign_access|${S3_SIGN_ACCESS_KEY}|g" \
@@ -139,6 +137,15 @@ sed \
 # Абсолютные пути: не зависят от того, откуда запущен compose.
 set_var SEAWEED_S3_CONFIG "${RUNTIME}/seaweedfs/s3.json"
 set_var KEYCLOAK_IMPORT_DIR "${RUNTIME}/keycloak"
+
+# Шрифты: лицензионные, в git и образ web не входят. Без --fonts compose берёт пустой ./fonts.
+if [[ -n "${FONTS_SRC}" ]]; then
+  mkdir -p "${RUNTIME}/fonts"
+  cp "${FONTS_SRC}"/*.woff* "${RUNTIME}/fonts/"
+  chmod 755 "${RUNTIME}/fonts"
+  chmod 644 "${RUNTIME}/fonts/"*
+  set_var FONTS_DIR "${RUNTIME}/fonts"
+fi
 
 # Права: .env читает только владелец. Файлы realm и s3.json монтируются в
 # контейнеры, которые работают под другим UID (Keycloak — 1000), поэтому они
@@ -155,7 +162,7 @@ if grep -qE "crm-bff-secret|crm-admin-secret|crm_secret_key|crm_access|change-me
   exit 1
 fi
 
-echo "готово:"
+echo "готово (режим TLS: ${TLS_MODE}, адрес: ${RTK_BASE_URL}):"
 echo "  ${ENV_FILE}"
 echo "  ${RUNTIME}/keycloak/realm-crm.json"
 echo "  ${RUNTIME}/seaweedfs/s3.json"

@@ -11,7 +11,8 @@
 #   docker compose --env-file .env --env-file .env.images up -d
 #
 # Профили: без флага — весь боевой стек (включая web); `integrations` —
-# mock-lms/mock-cms; `registry` — внутренний registry контура.
+# mock-lms/mock-cms; `registry` — внутренний registry контура; `demo-data` —
+# моковые данные демо-стенда (scripts/seed_demo.sh).
 
 name: rtk-crm
 
@@ -105,8 +106,9 @@ services:
       - "yes"
       - --maxmemory
       - 512mb
+      # Не вытеснять ничего: `volatile-lru` выбрасывал сессии и ключи идемпотентности (у них есть TTL).
       - --maxmemory-policy
-      - volatile-lru
+      - noeviction
     volumes:
       - redis_data:/data
     healthcheck:
@@ -120,10 +122,15 @@ services:
   seaweedfs:
     image: ${SEAWEEDFS_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
+    # -master.volumePreallocate=false: без него SeaweedFS при создании тома сразу резервирует на диске весь
+    # volumeSizeLimitMB (1 ГБ на том, по 7 томов на каждый из 5 бакетов): пустой стенд занимал 20–36 ГБ, а три стенда
+    # на одной VM забивали диск до отказа записи (No space left on device, 500 в API). С флагом место выделяется по
+    # мере роста данных. Комментарий стоит здесь, а не внутри command: внутри `>` он попал бы в командную строку.
     command: >
       server
       -dir=/data
       -master.volumeSizeLimitMB=1024
+      -master.volumePreallocate=false
       -volume.max=100
       -s3
       -s3.port=8333
@@ -180,6 +187,12 @@ services:
       - start
       - --import-realm
     environment:
+      # Администратор master realm. Keycloak 25.x читает KEYCLOAK_ADMIN / KEYCLOAK_ADMIN_PASSWORD; KC_BOOTSTRAP_ADMIN_*
+      # появились только в 26 и в 25.0.x игнорируются (тогда в master realm нет ни одного пользователя, и в консоль
+      # не войти). Оставлены оба набора: при переходе на 26+ ничего менять не придётся. Пользователь создаётся при
+      # старте, только если в master realm ещё нет пользователей.
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       KC_DB: postgres
@@ -300,18 +313,37 @@ services:
     image: ${CADDY_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
     ports:
-      - "${HTTP_PORT:-8080}:8080"
-      - "${HTTPS_PORT:-8443}:8443"
+      # Plain-http :8080 (healthcheck, локальный доступ). В публичных режимах TLS (internal/acme) HTTP_BIND=127.0.0.1:
+      # Docker публикует порты в обход ufw, и открытый наружу plain-http внутри демо-стенда не нужен.
+      - "${HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-8080}:8080"
+      # Контейнерный :80 — выпуск сертификата Let's Encrypt (HTTP-01) и редирект http -> https. Значение — вся
+      # спецификация публикации: по умолчанию эфемерный порт на loopback (наружу не публикуем), в публичных
+      # режимах gen_env.sh ставит 80:80.
+      - "${CRM_PORT80_PUBLISH:-127.0.0.1::80}"
+      # TLS-сайт: локально 8443, на публичном хосте 443 (CRM_TLS_PORT — порт внутри контейнера).
+      - "${HTTPS_PORT:-8443}:${CRM_TLS_PORT:-8443}"
+      - "${HTTPS_PORT:-8443}:${CRM_TLS_PORT:-8443}/udp"
       - "${S3_PROXY_PORT:-8333}:8333"
     environment:
       S3_ORIGIN: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:8333}
+      # Адреса, которым видна консоль администратора Keycloak (см. Caddyfile); по умолчанию — закрытые сети.
+      ADMIN_CONSOLE_ALLOW: ${ADMIN_CONSOLE_ALLOW:-private_ranges}
       WEB_UPSTREAM: ${WEB_UPSTREAM:-web:3000}
       CSP_SCRIPT_SRC: ${CSP_SCRIPT_SRC:-'self'}
       CRM_TLS_HOST: ${CRM_TLS_HOST:-localhost}
+      # Режим TLS (см. Caddyfile): tls_internal | tls_acme; S3-сайт: адрес и его TLS. Значения всегда непустые:
+      # пустое имя snippet'а Caddy не принимает.
+      CRM_TLS_PORT: ${CRM_TLS_PORT:-8443}
+      CRM_TLS_SNIPPET: ${CRM_TLS_SNIPPET:-tls_internal}
+      S3_SITE_ADDRESS: ${S3_SITE_ADDRESS:-:8333}
+      S3_TLS_SNIPPET: ${S3_TLS_SNIPPET:-tls_none}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Шрифты Rostelecom Basis: лицензионные, в git и образ web не входят. Каталог с *.woff (FONTS_DIR задаёт
+      # gen_env.sh --fonts; по умолчанию ./fonts рядом с compose, там только .gitkeep). Пустой каталог не ошибка.
+      - ${FONTS_DIR:-./fonts}:/srv/fonts:ro
       - caddy_data:/data
       - caddy_config:/config
     healthcheck:
@@ -365,6 +397,38 @@ services:
     profiles: ["integrations"]
     image: ${MOCK_CMS_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
+  # Моковые данные демо-стенда (профиль demo-data): три скрипта из ../seed ходят в
+  # API под демо-учётками (организации, сделки, задачи, справочники, праздники, ЕГРЮЛ,
+  # сценарии удаления ПДн). Стек сам этот сервис не поднимает: его запускает
+  # scripts/seed_demo.sh (`run --rm --no-deps`) после `up --wait`. Обращаются скрипты
+  # к Caddy внутри сети compose — DNS и TLS снаружи не нужны. Только для APP_PROFILE=demo:
+  # в prod Bearer-вход ограничен ролью INTEGRATION, а /config.json не отдаёт секрет клиента.
+  seed-demo:
+    profiles: ["demo-data"]
+    image: ${SEED_DEMO_IMAGE:?выполните scripts/render_env_images.py}
+    working_dir: /seed
+    entrypoint: ["sh", "/seed/run.sh"]
+    environment:
+      APP_URL: http://caddy:8080
+      # Под каким адресом представляться: из него Keycloak строит issuer токенов (см. seed/lib.mjs).
+      SEED_PUBLIC_URL: ${BASE_URL:-http://localhost:8080}
+      # Presigned-ссылки S3 подписаны на публичный адрес, из сети compose он недоступен: запросы идут в seaweedfs.
+      SEED_S3_PUBLIC_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:8333}
+      SEED_S3_INTERNAL_URL: http://seaweedfs:8333
+    volumes:
+      - ../seed:/seed:ro
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: node
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     logging: *logging

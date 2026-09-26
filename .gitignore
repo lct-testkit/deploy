@@ -7,3 +7,6 @@ dist/
 bundle/
 __pycache__/
 DEVOPS_PLAN.md
+# Шрифты Rostelecom Basis лицензионные: в репозиторий не коммитим (каталог остаётся за счёт .gitkeep)
+compose/fonts/*
+!compose/fonts/.gitkeep

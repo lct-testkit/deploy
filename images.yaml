@@ -90,10 +90,18 @@ external:
     # scripts/registry_load.sh заливает в него образы из офлайн-бандла.
     ref: docker.io/library/registry:2
     digest: "sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373"
+  seed-demo:
+    # Рантайм node для скриптов моковых данных (seed/*.mjs): сервис compose
+    # `seed-demo`, профиль `demo-data`. Имя совпадает с именем сервиса, как у
+    # `local-registry`. Образ попадает в офлайн-бандл, поэтому сиды работают
+    # без сети. В чарт не входит (сиды — только для демо-стенда на compose).
+    ref: docker.io/library/node:24-alpine
+    digest: "sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1"
 
 # Профили compose. core поднимается всегда (`docker compose up -d`): это
 # ровно то, что запускает compose/docker-compose.yml без --profile.
-# integrations и registry включаются явно.
+# integrations, registry и demo-data включаются явно (demo-data — моковые данные,
+# только для демо-стенда: scripts/seed_demo.sh).
 profiles:
   core:
     - caddy
@@ -113,3 +121,5 @@ profiles:
     - mock-cms
   registry:
     - local-registry
+  demo-data:
+    - seed-demo
