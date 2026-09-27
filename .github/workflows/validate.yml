@@ -24,7 +24,7 @@ env:
 jobs:
   yaml:
     name: yamllint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -32,7 +32,7 @@ jobs:
 
   actionlint:
     name: actionlint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,7 +43,7 @@ jobs:
 
   images-manifest:
     name: images.yaml
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,7 +57,7 @@ jobs:
 
   dockerfiles:
     name: hadolint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,7 +82,7 @@ jobs:
 
   compose:
     name: docker compose config
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -111,7 +111,7 @@ jobs:
 
   trivy:
     name: trivy fs
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -128,7 +128,7 @@ jobs:
 
   shellcheck:
     name: shellcheck
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,7 +139,7 @@ jobs:
 
   helm:
     name: helm lint + kubeconform
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -156,7 +156,7 @@ jobs:
 
   drift:
     name: compose · chart · копии конфигов vs images.yaml
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
