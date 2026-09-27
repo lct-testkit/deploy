@@ -21,8 +21,8 @@ images:
     repo: backend
     context: .
     dockerfile: Dockerfile
-    tag: "sha-d7a6e58"
-    digest: "sha256:af964663298e2e3e365bfa38e5b32666479279f584ea0e17354d8525ebcf7b16"
+    tag: "sha-f359eba"
+    digest: "sha256:7cc9205723de73d9ee6840a30f9740c4ebc035f556edba2c74ce4d38ed064700"
   web:
     repo: frontend
     context: .
