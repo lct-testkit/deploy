@@ -26,7 +26,7 @@
 # нужно удалить или сменить пароли в консоли Keycloak до открытия доступа
 # извне. Скрипт предупреждает об этом явно.
 #
-# Зависимости: только bash, sed, tr, head (никакого python/openssl — скрипт
+# Зависимости: только bash, sed, tr, head, base64 (coreutils; никакого python/openssl — скрипт
 # ездит в офлайн-бандле на минимальные серверы).
 set -euo pipefail
 
@@ -88,12 +88,21 @@ rand() {
   (set +o pipefail; LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$1")
 }
 
+# Ключ Fernet (SETTINGS_ENCRYPTION_KEY): 32 случайных байта в url-safe base64 (44 знака, `=` на конце). Только
+# coreutils: на целевой машине нет ни python, ни openssl.
+fernet_key() {
+  (set +o pipefail; head -c 32 /dev/urandom | base64 | tr -d '
+' | tr '+/' '-_')
+}
+
 POSTGRES_PASSWORD="$(rand 32)"
 CRM_APP_PASSWORD="$(rand 32)"
 KEYCLOAK_ADMIN_PASSWORD="$(rand 24)"
 KEYCLOAK_CLIENT_SECRET="$(rand 40)"
 KEYCLOAK_ADMIN_CLIENT_SECRET="$(rand 40)"
 SIGNATURE_SERVER_SECRET="$(rand 48)"
+AUDIT_HMAC_KEY="$(rand 48)"
+SETTINGS_ENCRYPTION_KEY="$(fernet_key)"
 S3_ACCESS_KEY="$(rand 20)"
 S3_SECRET_KEY="$(rand 40)"
 S3_SIGN_ACCESS_KEY="$(rand 20)"
@@ -112,6 +121,8 @@ set_var KEYCLOAK_ADMIN_PASSWORD "${KEYCLOAK_ADMIN_PASSWORD}"
 set_var KEYCLOAK_CLIENT_SECRET "${KEYCLOAK_CLIENT_SECRET}"
 set_var KEYCLOAK_ADMIN_CLIENT_SECRET "${KEYCLOAK_ADMIN_CLIENT_SECRET}"
 set_var SIGNATURE_SERVER_SECRET "${SIGNATURE_SERVER_SECRET}"
+set_var AUDIT_HMAC_KEY "${AUDIT_HMAC_KEY}"
+set_var SETTINGS_ENCRYPTION_KEY "${SETTINGS_ENCRYPTION_KEY}"
 set_var S3_ACCESS_KEY "${S3_ACCESS_KEY}"
 set_var S3_SECRET_KEY "${S3_SECRET_KEY}"
 set_var CMS_WEBHOOK_SECRET "${CMS_WEBHOOK_SECRET}"
