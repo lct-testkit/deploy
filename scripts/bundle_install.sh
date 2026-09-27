@@ -322,13 +322,23 @@ echo "== 1/6 проверка контрольных сумм =="
 sha256sum --quiet -c SHA256SUMS || { echo "ОШИБКА: контрольные суммы не сошлись — бандл повреждён или изменён" >&2; exit 1; }
 echo "   SHA256SUMS: ок ($(wc -l < SHA256SUMS) файлов)"
 
-if [[ -f SHA256SUMS.sigstore.json ]] && command -v cosign >/dev/null 2>&1; then
-  echo "== подпись SHA256SUMS (cosign) =="
-  cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+# release.yml подписывает не SHA256SUMS (она только внутри бандла), а контрольную сумму самого
+# архива — <имя-бандла>.tar.gz.sha256 / .sigstore.json, отдельными файлами релиза рядом с
+# архивом (RUNBOOK «Офлайн-установка»). Распакованный бандл — это каталог с тем же именем, что
+# и архив (build_offline_bundle.sh: `tar -C … -czf "${NAME}.tar.gz" "${NAME}"`), поэтому если
+# архив распаковали там же, где скачали (обычный сценарий), эти файлы лежат рядом, уровнем выше.
+bundle_name="$(basename "$PWD")"
+sums_sig="../${bundle_name}.tar.gz.sha256.sigstore.json"
+sums_file="../${bundle_name}.tar.gz.sha256"
+if [[ -f "${sums_sig}" && -f "${sums_file}" ]] && command -v cosign >/dev/null 2>&1; then
+  echo "== подпись архива (cosign) =="
+  cosign verify-blob "${sums_file}" --bundle "${sums_sig}" \
     --certificate-identity-regexp '^https://github.com/lct-testkit/deploy/' \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  echo "   подпись архива: ок"
 else
-  echo "   подпись не проверялась (нет cosign или SHA256SUMS.sigstore.json) — сверьте SHA256SUMS с опубликованным вне канала передачи"
+  echo "   подпись архива не проверена автоматически (нет cosign или архив/.sha256/.sigstore.json не лежат рядом с распакованным каталогом) —"
+  echo "   сверьте вручную командой из RUNBOOK.md («Офлайн-установка») или из описания релиза"
 fi
 
 echo "== 2/6 docker load =="
