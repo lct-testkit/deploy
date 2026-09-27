@@ -22,8 +22,8 @@ images:
   # drift-проверка (scripts/check_drift.py) падает при расхождении. Руками не правим.
   api:
     repository: api   # -> ghcr.io/lct-testkit/api ; используют api/worker/migrate/seed/sms-gateway-mock
-    tag: sha-f766ea8
-    digest: "sha256:3039546f8370f49088ef6dfa847919e64fb7f362f1657a84052b2ae04b887a57"
+    tag: sha-b03e2a3
+    digest: "sha256:eb2fe1144810bae7ffdeb46d14d8e3f52a994f416302b8b75a361709f7c2b006"
   web:
     repository: web   # -> ghcr.io/lct-testkit/web
     tag: sha-10f9977
