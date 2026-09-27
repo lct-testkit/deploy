@@ -212,6 +212,17 @@ env:
   bitrixWebhookUrl: ""
   integrationWebhookRateLimitPerMin: "60"
 
+  # Пробрасываются как есть (не секреты): совпадают по умолчанию с backend/.env.example.
+  bitrixSourceId: "OTHER"
+  allowedFileExtensions: "png,jpeg,jpg,pdf,zip,gz,gzip,rar,doc,docx,xls,xlsx,xml,csv,json"
+  signatureExposeDebugOtp: ""
+  # Почта: без smtpHost письма (в том числе ссылки подписантам) остаются в очереди. smtpPassword — в secrets.
+  smtpHost: ""
+  smtpPort: "587"
+  smtpUser: ""
+  smtpFrom: ""
+  smtpStarttls: "true"
+
 # Секреты — шаблонизируются в Kubernetes Secret (см. templates/secret.yaml),
 # НЕ зашиты напрямую в Deployment/Job. Значения по умолчанию — те же
 # демо-дефолты, что в backend/.env.example (нужны, чтобы demo-seed и
@@ -228,3 +239,8 @@ secrets:
   signatureServerSecret: "change-me-in-prod" # CHANGE ME for any real deployment
   s3AccessKey: "crm_access"                  # CHANGE ME for any real deployment
   s3SecretKey: "crm_secret_key"              # CHANGE ME for any real deployment
+  # Пусто по умолчанию — функции выключены (хэш аудита v2, настройки не шифруются, почта не настроена),
+  # как в backend/.env.example. Значение — только через Secret (--set secrets.xxx=... или values-prod.yaml).
+  auditHmacKey: ""
+  settingsEncryptionKey: ""
+  smtpPassword: ""
