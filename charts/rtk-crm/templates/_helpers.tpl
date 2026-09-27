@@ -158,6 +158,31 @@ $(VAR)-подстановку в поле `value:` только для пере�
   value: {{ .Values.env.cmsWebhookSecret | quote }}
 - name: BITRIX_WEBHOOK_URL
   value: {{ .Values.env.bitrixWebhookUrl | quote }}
+- name: BITRIX_SOURCE_ID
+  value: {{ .Values.env.bitrixSourceId | quote }}
+- name: ALLOWED_FILE_EXTENSIONS
+  value: {{ .Values.env.allowedFileExtensions | quote }}
+- name: SIGNATURE_EXPOSE_DEBUG_OTP
+  value: {{ .Values.env.signatureExposeDebugOtp | quote }}
+# Ключ HMAC цепочки аудита (хэш v3) и ключ шифрования секретных системных настроек: пусто — функции
+# выключены (как в backend/.env.example), непусто — только через Secret, не values.yaml открытым текстом.
+- name: AUDIT_HMAC_KEY
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: audit-hmac-key } }
+- name: SETTINGS_ENCRYPTION_KEY
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: settings-encryption-key } }
+# Почта (ссылки подписантам, email-уведомления): без SMTP_HOST письма остаются в очереди.
+- name: SMTP_HOST
+  value: {{ .Values.env.smtpHost | quote }}
+- name: SMTP_PORT
+  value: {{ .Values.env.smtpPort | quote }}
+- name: SMTP_USER
+  value: {{ .Values.env.smtpUser | quote }}
+- name: SMTP_PASSWORD
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: smtp-password } }
+- name: SMTP_FROM
+  value: {{ .Values.env.smtpFrom | quote }}
+- name: SMTP_STARTTLS
+  value: {{ .Values.env.smtpStarttls | quote }}
 {{- end -}}
 
 {{/*
