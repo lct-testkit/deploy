@@ -187,6 +187,10 @@ env:
   keycloakAdminClientId: crm-admin
   keycloakAdmin: admin
   keycloakVerifyAudience: "true"
+  # Bearer в обход сессии (см. compose/docker-compose.yml — тот же пропущенный проброс, тут для
+  # чарта отдельно, значения не сведены в один источник). По умолчанию выключен — прод не должен
+  # заводить это неявно; включать явно только на demo/dev-релизах чарта.
+  allowBearerAuth: "false"
 
   uvicornWorkers: "1"
 

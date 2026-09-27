@@ -124,6 +124,8 @@ $(VAR)-подстановку в поле `value:` только для пере�
   valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: keycloak-admin-client-secret } }
 - name: KEYCLOAK_VERIFY_AUDIENCE
   value: {{ .Values.env.keycloakVerifyAudience | quote }}
+- name: ALLOW_BEARER_AUTH
+  value: {{ .Values.env.allowBearerAuth | quote }}
 - name: S3_ENDPOINT_URL
   value: http://seaweedfs:8333
 - name: S3_PUBLIC_ENDPOINT_URL
