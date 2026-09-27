@@ -26,8 +26,8 @@ images:
     digest: "sha256:c70427a84bf11c7465db044be65042389457da30ea7a27fd8f4b5f7e3e22db01"
   web:
     repository: web   # -> ghcr.io/lct-testkit/web
-    tag: sha-41dde50
-    digest: "sha256:6d049fb8fe6e5c9019e7c2ad3a106c706cc4784534470e8b83aa7d0398558b9c"
+    tag: sha-8861d41
+    digest: "sha256:ead82f255a6146d9dabe86e777f5944aa7b851f137ce193d8ac927633e1a19dd"
 
   # Внешние образы — пин по digest из ../../images.yaml (не только тег,
   # чтобы попасть гарантированно в тот же образ, что зафиксирован в
