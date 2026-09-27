@@ -61,6 +61,19 @@ x-api-env: &api-env
   INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN: ${INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN:-60}
   CMS_WEBHOOK_SECRET: ${CMS_WEBHOOK_SECRET:-}
   BITRIX_WEBHOOK_URL: ${BITRIX_WEBHOOK_URL:-}
+  BITRIX_SOURCE_ID: ${BITRIX_SOURCE_ID:-OTHER}
+  ALLOWED_FILE_EXTENSIONS: ${ALLOWED_FILE_EXTENSIONS:-png,jpeg,jpg,pdf,zip,gz,gzip,rar,doc,docx,xls,xlsx,xml,csv,json}
+  # Ключ HMAC цепочки аудита (хэш v3) и ключ шифрования секретных системных настроек: gen_env.sh создаёт оба.
+  AUDIT_HMAC_KEY: ${AUDIT_HMAC_KEY:-}
+  SETTINGS_ENCRYPTION_KEY: ${SETTINGS_ENCRYPTION_KEY:-}
+  # Почта (ссылки подписантам, email-уведомления): без SMTP_HOST письма остаются в очереди.
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_FROM: ${SMTP_FROM:-}
+  SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+  SIGNATURE_EXPOSE_DEBUG_OTP: ${SIGNATURE_EXPOSE_DEBUG_OTP:-}
 
 services:
   postgres:

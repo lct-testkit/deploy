@@ -154,6 +154,22 @@ def check_shared_configs(backend_dir: Path | None) -> None:
             err("compose/Caddyfile расходится с backend/deploy/Caddyfile")
 
 
+def check_api_env(backend_dir: Path | None) -> None:
+    """Список x-api-env (переменные, которые долетают до api/worker) совпадает с backend: иначе новая настройка
+    бэкенда молча не действует на развёрнутом стенде (так были потеряны ключ аудита и SMTP)."""
+    if backend_dir is None:
+        return
+    src_path = backend_dir / "docker-compose.yml"
+    if not src_path.exists():
+        return
+    src = set(load_yaml(src_path).get("x-api-env", {}))
+    ours = set(load_yaml(REPO_ROOT / "compose" / "docker-compose.yml").get("x-api-env", {}))
+    if src - ours:
+        err("compose/docker-compose.yml: в x-api-env нет переменных бэкенда: " + ", ".join(sorted(src - ours)))
+    if ours - src:
+        err("compose/docker-compose.yml: в x-api-env есть переменные, которых нет у бэкенда: " + ", ".join(sorted(ours - src)))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--backend-dir", type=Path, default=None,
@@ -164,6 +180,7 @@ def main() -> int:
     check_compose(images_doc)
     check_values(images_doc)
     check_shared_configs(args.backend_dir)
+    check_api_env(args.backend_dir)
 
     if errors:
         for e in errors:

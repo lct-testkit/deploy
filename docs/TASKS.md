@@ -2,13 +2,12 @@
 
 Список того, что не сделано или требует решения. Всё выполненное убрано: установщик с выбором окружения, адреса и TLS, моковые данные, шрифты, `set_host.sh`, админ Keycloak 25, отказ от предвыделения места в SeaweedFS и синхронизация Caddyfile с backend вошли в релиз `v0.3.1` и проверены на сервере `lct.velikoss.ru` (26.09.2026: `smoke.sh` зелёный, миграции до 0020, диск 13%). Разделы упорядочены по важности.
 
-## 1. Пробросить переменные бэкенда в контейнеры api
+## 1. Переменные бэкенда в Helm-чарте
 
-`x-api-env` в `compose/docker-compose.yml` знает 31 переменную, у бэкенда их 42. Не пробрасываются `AUDIT_HMAC_KEY`, `SETTINGS_ENCRYPTION_KEY`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_STARTTLS`, `SIGNATURE_EXPOSE_DEBUG_OTP`, `ALLOWED_FILE_EXTENSIONS`, `BITRIX_SOURCE_ID`. Пока список не расширен, на развёрнутых стендах HMAC аудита (хэш v3), почта подписантам и шифрование системных настроек выключены.
+`x-api-env` в `compose/docker-compose.yml` теперь совпадает с бэкендом (42 имени, сверяет `check_drift.py --backend-dir`), `gen_env.sh` создаёт `AUDIT_HMAC_KEY` и `SETTINGS_ENCRYPTION_KEY`, почта описана в `RUNBOOK.md`. Осталось:
 
-- [ ] Добавить переменные в `x-api-env` compose и в шаблоны Helm-чарта.
-- [ ] Генерировать `AUDIT_HMAC_KEY` и `SETTINGS_ENCRYPTION_KEY` в `scripts/gen_env.sh` (в prod без них не запускаться), описать включение SMTP в `RUNBOOK.md`.
-- [ ] Научить `check_drift.py` сверять список переменных `x-api-env` с бэкендом.
+- [ ] Добавить те же переменные в шаблоны Helm-чарта (`charts/rtk-crm/templates/_helpers.tpl`, секреты и конфиг).
+- [ ] На уже развёрнутых стендах (`lct`) добавить ключи в `.env` и пересоздать `api` и `worker` (или переустановить бандлом новой версии).
 
 ## 2. Безопасность demo-режима и prod
 
