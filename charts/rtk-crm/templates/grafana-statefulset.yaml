@@ -1,0 +1,129 @@
+# grafana — единственный инстанс (sqlite собственного состояния Grafana на PVC, не кластер), тот же
+# принцип, что prometheus/postgres/redis/seaweedfs. Опционально — см. values.monitoring.enabled.
+# Headless Service, как у остальных однорепличных stateful-компонентов чарта (см.
+# prometheus-statefulset.yaml) — Caddy обращается по имени "grafana" (см. files/Caddyfile, /grafana/*).
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "grafana") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "grafana") | nindent 4 }}
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: grafana
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "grafana") | nindent 4 }}
+spec:
+  serviceName: grafana
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "grafana") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "grafana") | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-grafana.yaml") . | sha256sum }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      # Официальный образ grafana/grafana слушает под непривилегированным пользователем 472 (не
+      # root) и пишет sqlite в /var/lib/grafana — тот же довод, что у fsGroup в
+      # prometheus-statefulset.yaml (комментарий там подробнее): на свежем PVC каталог обычно
+      # root:root, 472 не сможет в него писать без fsGroup. Тот же UID использует официальный
+      # Helm-чарт Grafana.
+      securityContext:
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: "{{ include "rtk-crm.externalImage" .Values.images.grafana }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          env:
+            # GF_SERVER_ROOT_URL/GF_SERVER_SERVE_FROM_SUB_PATH — та же пара, что в
+            # compose/docker-compose.yml (сервис grafana, комментарий там подробнее про handle vs
+            # handle_path) и то же значение baseURL, что у KEYCLOAK_URL в _helpers.tpl.
+            - name: GF_SERVER_ROOT_URL
+              value: {{ printf "%s/grafana/" .Values.env.baseURL | quote }}
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
+            - name: GF_SECURITY_ADMIN_USER
+              value: {{ .Values.env.grafanaAdminUser | quote }}
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: grafana-admin-password } }
+            # Grafana сидит на публичном пути /grafana без отдельного IP-ограничения (в отличие от
+            # консоли администратора Keycloak) — барьер снаружи только её собственный вход, поэтому
+            # signup/анонимный доступ выключаем явно.
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "false"
+          ports:
+            - name: http
+              containerPort: 3000
+          volumeMounts:
+            - name: grafana-data
+              mountPath: /var/lib/grafana
+            - name: grafana-config
+              mountPath: /etc/grafana/provisioning/datasources/datasource.yml
+              subPath: datasource.yml
+              readOnly: true
+            - name: grafana-config
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yml
+              subPath: dashboards.yml
+              readOnly: true
+            - name: grafana-config
+              mountPath: /etc/grafana/dashboards/api-overview.json
+              subPath: api-overview.json
+              readOnly: true
+            - name: grafana-config
+              mountPath: /etc/grafana/dashboards/business-ops.json
+              subPath: business-ops.json
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /grafana/api/health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+            initialDelaySeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /grafana/api/health
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+            initialDelaySeconds: 15
+          resources:
+            {{- toYaml .Values.resources.grafana | nindent 12 }}
+      volumes:
+        - name: grafana-config
+          configMap:
+            name: grafana-config
+  volumeClaimTemplates:
+    - metadata:
+        name: grafana-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.grafana.accessModes | nindent 10 }}
+        {{- if .Values.persistence.grafana.storageClassName }}
+        storageClassName: {{ .Values.persistence.grafana.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.grafana.size }}
+{{- end }}

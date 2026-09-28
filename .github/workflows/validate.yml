@@ -100,7 +100,7 @@ jobs:
             -f compose/docker-compose.yml \
             --env-file compose/.env.example \
             --env-file "${RUNNER_TEMP}/env.images" \
-            --profile integrations --profile registry --profile demo-data \
+            --profile integrations --profile registry --profile demo-data --profile monitoring \
             config --quiet
       - name: Без .env.images compose обязан падать (fail closed)
         run: |
@@ -151,7 +151,10 @@ jobs:
           set -euo pipefail
           bash scripts/pull_retry.sh "${KUBECONFORM_IMAGE}"
           helm lint charts/rtk-crm
-          helm template charts/rtk-crm \
+          helm lint charts/rtk-crm --set monitoring.enabled=true
+          # monitoring.enabled=true — иначе prometheus/grafana (values.monitoring.enabled=false по
+          # умолчанию, как у ingress.enabled) ни разу не попадают под kubeconform.
+          helm template charts/rtk-crm --set monitoring.enabled=true \
             | docker run --rm -i "${KUBECONFORM_IMAGE}" -strict -summary -
 
   drift:

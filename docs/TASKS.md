@@ -45,8 +45,9 @@
 
 ## 7. Эксплуатация
 
-- [ ] Алерт на заполнение диска: инцидент `No space left on device` проявился как 500 в API и падение сидов, а не как понятная ошибка. Метрик Prometheus и Grafana нет.
+- [ ] Алерт на заполнение диска: инцидент `No space left on device` проявился как 500 в API и падение сидов, а не как понятная ошибка. Метрики приложения теперь есть (профиль compose `monitoring` / `values.monitoring.enabled`: Prometheus + Grafana, см. RUNBOOK.md, «Мониторинг и логи») — но это метрики backend, не диска/хоста: node_exporter/cAdvisor и алертинг (Alertmanager или Grafana alerting) по-прежнему не заведены, для конкретно этого инцидента толку от новой Grafana пока нет.
+- [ ] Часть метрик backend объявлена в `app/core/metrics.py`, но нигде не инкрементируется (проверено `grep` по импортам из `app.core.metrics` в backend, 28.09.2026): `crm_sla_violations_total`, `crm_sla_breaching_deals` (`sweep_sla_breaches` в `app/modules/crm/tasks.py` считает нарушения, но пишет их только в structlog и БД, не в эти метрики), `crm_reports_in_progress`, `crm_background_task_duration_seconds`, `crm_import_duration_seconds`/`crm_import_rows_total`, `crm_cache_requests_total`. Панель «SLA и отчёты — ждут подключения в backend» в дашборде `compose/grafana/dashboards/business-ops.json` намеренно показывает No data, пока backend не допишет `.labels(...).inc()/.set()` в нужных местах — тикет для backend, не для deploy.
 - [ ] RPO 15 минут недостижим без WAL-архивирования: суточный дамп даёт сутки.
-- [ ] Helm-путь экспериментальный: реальная установка в CI не гоняется, у workload'ов нет `securityContext` (только у `ntp`). Режимов TLS, шрифтов и сидов в чарте нет (Kubernetes использует свой ingress) — осознанное ограничение.
+- [ ] Helm-путь экспериментальный: реальная установка в CI не гоняется, у workload'ов нет `securityContext` (кроме `ntp` — capabilities, и `prometheus`/`grafana` — `fsGroup` для PVC, см. RUNBOOK.md). Режимов TLS, шрифтов и сидов в чарте нет (Kubernetes использует свой ingress) — осознанное ограничение.
 - [ ] На сервере `lct` проверить шрифты в `compose/fonts/` (в репозитории их быть не может).
 - [ ] Репозиторий: удалить ветку бота `bot/update-images-35271171079`, применить ruleset к `.github` и включить `require_code_owner_review` (см. `REPO-SETTINGS.md`).

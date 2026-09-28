@@ -132,6 +132,15 @@ def check_shared_configs(backend_dir: Path | None) -> None:
         "keycloak/realm-crm.json": "realm-crm.json",
         "seaweedfs/s3.json": "s3.json",
         "postgres/init-keycloak-db.sh": "init-keycloak-db.sh",
+        # Prometheus/Grafana не копируются из backend/deploy (их там нет — сравнение с backend_dir
+        # ниже молча пропускается, когда файла с той стороны не существует), только compose/ и
+        # chart/files/ должны совпадать побайтно: тот же относительный путь с обеих сторон, раз
+        # структура каталогов зеркальна.
+        "prometheus/prometheus.yml": "prometheus/prometheus.yml",
+        "grafana/provisioning/datasources/datasource.yml": "grafana/provisioning/datasources/datasource.yml",
+        "grafana/provisioning/dashboards/dashboards.yml": "grafana/provisioning/dashboards/dashboards.yml",
+        "grafana/dashboards/api-overview.json": "grafana/dashboards/api-overview.json",
+        "grafana/dashboards/business-ops.json": "grafana/dashboards/business-ops.json",
     }
     for rel, chart_name in shared.items():
         base = _read(compose / rel)

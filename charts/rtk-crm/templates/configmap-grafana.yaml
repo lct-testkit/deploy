@@ -1,0 +1,22 @@
+# Датасорс, провайдер дашбордов и сами дашборды Grafana — идентичны compose/grafana/ (сверяет
+# scripts/check_drift.py). Четыре файла в одном ConfigMap (как у остальных config-ConfigMap'ов чарта
+# — один объект на компонент), каждый монтируется по своему пути через subPath в
+# grafana-statefulset.yaml.
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "grafana") | nindent 4 }}
+data:
+  datasource.yml: |-
+{{ .Files.Get "files/grafana/provisioning/datasources/datasource.yml" | indent 4 }}
+  dashboards.yml: |-
+{{ .Files.Get "files/grafana/provisioning/dashboards/dashboards.yml" | indent 4 }}
+  api-overview.json: |-
+{{ .Files.Get "files/grafana/dashboards/api-overview.json" | indent 4 }}
+  business-ops.json: |-
+{{ .Files.Get "files/grafana/dashboards/business-ops.json" | indent 4 }}
+{{- end }}

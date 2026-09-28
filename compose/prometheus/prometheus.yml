@@ -1,0 +1,43 @@
+# Конфиг Prometheus контура (профиль compose `monitoring` / values.monitoring.enabled в чарте).
+# Идентичен charts/rtk-crm/files/prometheus/prometheus.yml — сверяет scripts/check_drift.py,
+# один и тот же файл верен для обоих способов раскладки (см. комментарий у job "api" ниже).
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # Сам Prometheus.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # backend/app/core/metrics.py: RED-метрики (crm_http_requests_total, crm_http_request_duration_seconds —
+  # гистограмма с бакетами под бюджет p95 <= 300 мс, crm_http_errors_total), crm_queue_depth,
+  # crm_background_tasks_total, crm_reports_in_progress, crm_audit_records_total, crm_dependency_up.
+  # Отдаётся на /metrics без префикса и без авторизации (backend/app/api/health.py) — доступно только
+  # внутри сети crm, Caddy отдаёт на него 404 снаружи (см. Caddyfile).
+  #
+  # Таргет — ОДНО имя "api", не список реплик. У api один uvicorn-воркер на контейнер, масштабирование —
+  # репликами (`docker compose up -d --scale api=3`, см. backend/deploy/entrypoint.sh). В compose имя
+  # "api" резолвится встроенной DNS во ВСЕ IP реплик по кругу (round-robin A-записей на каждый lookup);
+  # в Kubernetes то же имя — Service "api" с ClusterIP, который балансирует на все Pod'ы-реплики
+  # (kube-proxy/IPVS). В обоих случаях новое TCP-соединение на каждый scrape статистически попадает в
+  # разные реплики по очереди — таргет один, а не N. Ни dns_sd_configs, ни kubernetes_sd_configs
+  # (отдельный таргет на реплику + метка instance) сюда намеренно не заведены: для демо-масштаба этого
+  # стенда (несколько реплик, задача — общая картина RED/SLA по сервису, а не построчная разбивка по
+  # репликам) хватает единственного таргета со scrape_interval 15s — расхождение между репликами
+  # усредняется за пару интервалов. Если понадобится честная разбивка по репликам — заводить
+  # kubernetes_sd_configs (K8s) отдельно от compose (там аналога нет без cadvisor/докер-сокета).
+  - job_name: api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8000"]
+
+  # KC_METRICS_ENABLED=true (см. docker-compose.yml/values.yaml) выставляет метрики на
+  # management-порту 9000 — том же, что health (см. healthcheck сервиса keycloak): у него
+  # KC_HTTP_RELATIVE_PATH=/auth действует и на management-интерфейсе, поэтому путь /auth/metrics,
+  # а не просто /metrics.
+  - job_name: keycloak
+    metrics_path: /auth/metrics
+    static_configs:
+      - targets: ["keycloak:9000"]

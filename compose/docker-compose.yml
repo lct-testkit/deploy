@@ -12,7 +12,8 @@
 #
 # Профили: без флага — весь боевой стек (включая web); `integrations` —
 # mock-lms/mock-cms; `registry` — внутренний registry контура; `demo-data` —
-# моковые данные демо-стенда (scripts/seed_demo.sh).
+# моковые данные демо-стенда (scripts/seed_demo.sh); `monitoring` — Prometheus + Grafana
+# (scripts/bundle_install.sh --monitoring), дашборды за Caddy на /grafana.
 
 name: rtk-crm
 
@@ -468,6 +469,71 @@ services:
     logging: *logging
     networks: [crm]
 
+  # Собирает метрики api/keycloak (см. prometheus/prometheus.yml — там же разбор, почему таргет
+  # "api" один, а не список реплик). Профиль monitoring: docker compose --profile monitoring up -d
+  # (scripts/bundle_install.sh --monitoring) — опционален, не входит в core. Наружу (в т.ч. через
+  # Caddy) не публикуется: у Prometheus нет своей аутентификации, доступ — только контейнер-контейнер
+  # внутри сети crm (Grafana ходит туда как датасорс).
+  prometheus:
+    profiles: ["monitoring"]
+    image: ${PROMETHEUS_IMAGE:?выполните scripts/render_env_images.py}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:9090/-/ready || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
+  # UI дашбордов по метрикам Prometheus. Датасорс и оба дашборда — file-based provisioning
+  # (./grafana/provisioning, ./grafana/dashboards: те же файлы, что charts/rtk-crm/files/grafana —
+  # сверяет scripts/check_drift.py), не ручной клик в UI — переживают переустановку/`down -v` тома
+  # grafana_data. Отдаётся наружу через Caddy на /grafana (см. Caddyfile) — GF_SERVER_ROOT_URL и
+  # GF_SERVER_SERVE_FROM_SUB_PATH ниже держат абсолютные ссылки/редиректы Grafana в этом префиксе,
+  # тем же приёмом, что Keycloak и KC_HTTP_RELATIVE_PATH=/auth.
+  grafana:
+    profiles: ["monitoring"]
+    image: ${GRAFANA_IMAGE:?выполните scripts/render_env_images.py}
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: ${BASE_URL:-http://localhost:8080}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      # Grafana сидит на публичном пути /grafana без отдельного IP-ограничения (в отличие от консоли
+      # администратора Keycloak) — единственный барьер снаружи — её собственный вход, поэтому
+      # signup/анонимный доступ выключаем явно, а не полагаемся на дефолт образа.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/grafana/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
 volumes:
   registry_data:
   postgres_data:
@@ -475,6 +541,8 @@ volumes:
   seaweed_data:
   caddy_data:
   caddy_config:
+  prometheus_data:
+  grafana_data:
 
 networks:
   crm:

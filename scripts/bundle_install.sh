@@ -23,6 +23,8 @@
 #   --skip-dns-check не проверять, что имя (для acme) указывает на этот сервер
 #   --reconfigure  не устанавливать, а сменить адрес/режим TLS у установленного стенда (то же, что scripts/set_host.sh)
 #   --registry     поднять внутренний registry (localhost:5000) и залить в него образы
+#   --monitoring   поднять Prometheus + Grafana (дашборды по метрикам API на /grafana, профиль compose
+#                  `monitoring`); по умолчанию не поднимается
 #   --no-start     только проверить, загрузить образы и создать .env, стек не запускать
 #
 # Без терминала (CI, ssh без tty) вопросов нет: берутся флаги и значения по умолчанию
@@ -49,6 +51,7 @@ OPEN_FW=0
 SKIP_DNS=0
 RECONFIGURE=0
 WITH_REGISTRY=0
+WITH_MONITORING=0
 START=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --skip-dns-check) SKIP_DNS=1; shift ;;
     --reconfigure) RECONFIGURE=1; shift ;;
     --registry) WITH_REGISTRY=1; shift ;;
+    --monitoring) WITH_MONITORING=1; shift ;;
     --no-start) START=0; shift ;;
     -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo pipefail/!p}' "${SELF}"; exit 0 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
@@ -237,6 +241,8 @@ case "${TLS}" in
 esac
 seed_label="нет (чистая система)"
 [[ "${SEED}" == 1 ]] && seed_label="да (справочники, организации, сделки, задачи, ЕГРЮЛ, праздники)"
+monitoring_label="нет"
+[[ "${WITH_MONITORING}" == 1 ]] && monitoring_label="да (Prometheus + Grafana, дашборды на /grafana)"
 fonts_label="нет: интерфейс на запасной гарнитуре (файлы *.woff можно добавить позже, см. RUNBOOK)"
 if [[ -n "${FONTS_SRC}" ]]; then
   fonts_label="из ${FONTS_SRC}"
@@ -250,6 +256,7 @@ echo "   адрес:           ${address_label}"
 echo "   режим TLS:       ${TLS}"
 echo "   шрифты:          ${fonts_label}"
 echo "   моковые данные:  ${seed_label}"
+echo "   мониторинг:      ${monitoring_label}"
 
 # --- предполётные проверки публичных режимов: до docker load, он долгий -------------------
 # Только свежая установка (иначе порты заняты нашим же стеком) и только если стек будем запускать.
@@ -370,7 +377,10 @@ if [[ "${START}" == 0 ]]; then
 fi
 
 echo "== 4/6 docker compose up =="
-docker compose -f compose/docker-compose.yml --env-file compose/.env --env-file compose/.env.images up -d --wait --wait-timeout 300 --pull never
+compose_profile_args=()
+[[ "${WITH_MONITORING}" == 1 ]] && compose_profile_args+=(--profile monitoring)
+docker compose -f compose/docker-compose.yml --env-file compose/.env --env-file compose/.env.images \
+  "${compose_profile_args[@]}" up -d --wait --wait-timeout 300 --pull never
 
 echo "== 5/6 smoke =="
 LOCAL_HTTP_PORT="$(grep -E '^HTTP_PORT=' compose/.env | cut -d= -f2)"
@@ -392,6 +402,9 @@ fi
 FINAL_URL="$(grep -E '^BASE_URL=' compose/.env | cut -d= -f2-)"
 echo
 echo "готово: ${FINAL_URL}"
+if [[ "${WITH_MONITORING}" == 1 ]]; then
+  echo "   Grafana: ${FINAL_URL}/grafana/ (логин — GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD в compose/.env)"
+fi
 if [[ "${PROFILE}" == demo ]]; then
   echo "   вход: на экране входа выберите демо-учётку (администратор, руководитель, менеджер, аудитор)"
   case "${SHOW_HOST}" in

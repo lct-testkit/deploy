@@ -219,7 +219,7 @@ helm install rtk-crm charts/rtk-crm -n rtk-crm --create-namespace \
   --set secrets.signatureServerSecret=<реальный-секрет>
 ```
 
-Полный список значений — `charts/rtk-crm/values.yaml`. Обновление — `helm upgrade`, откат — `helm rollback`. **Статус:** чарт проходит `helm lint` и kubeconform, drift-проверку против `images.yaml`, но реальная установка в кластер в CI пока не гоняется; первая установка `helm install` может упереться в порядок хуков `migrate`/`seed` (`pre-install` выполняется раньше создания postgres) — используйте `helm upgrade --install` поверх уже созданной БД либо считайте Helm-путь экспериментальным. Основной поддерживаемый путь — compose. Известный долг чарта: у workload'ов нет `securityContext` (`runAsNonRoot`, `readOnlyRootFilesystem`, `capabilities.drop`) — Trivy misconfig даёт KSV-0118 и родственные; добавлять их нужно по одному образу с проверкой в кластере (postgres/keycloak/seaweedfs пишут в свои тома под конкретными UID), поэтому в CI misconfig-скан чарта не включён.
+Полный список значений — `charts/rtk-crm/values.yaml`. Обновление — `helm upgrade`, откат — `helm rollback`. **Статус:** чарт проходит `helm lint` и kubeconform, drift-проверку против `images.yaml`, но реальная установка в кластер в CI пока не гоняется; первая установка `helm install` может упереться в порядок хуков `migrate`/`seed` (`pre-install` выполняется раньше создания postgres) — используйте `helm upgrade --install` поверх уже созданной БД либо считайте Helm-путь экспериментальным. Основной поддерживаемый путь — compose. Известный долг чарта: у workload'ов нет `securityContext` (`runAsNonRoot`, `readOnlyRootFilesystem`, `capabilities.drop`) — Trivy misconfig даёт KSV-0118 и родственные; добавлять их нужно по одному образу с проверкой в кластере (postgres/keycloak/seaweedfs пишут в свои тома под конкретными UID), поэтому в CI misconfig-скан чарта не включён. Исключение — `prometheus`/`grafana` (`values.monitoring.enabled`): им заведён минимальный `securityContext.fsGroup` (65534/472, те же UID, что у официальных образов и их собственных Helm-чартов) — без него оба пишут на PVC под непривилегированным пользователем и не стартуют на свежем томе (в docker-compose эту проблему решает сам Docker, копируя владельца каталога из образа при первом использовании именованного volume — на PVC такого нет).
 
 ## Перед боевым контуром
 
@@ -232,7 +232,14 @@ docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-dem
   --env-file /srv/rtk-demo/.env.images logs -f api
 ```
 
-`api`/`keycloak` отдают Prometheus-метрики на `/metrics` изнутри сети — сборщика в `compose/`/чарте нет (только эндпоинты). Ротация логов — `json-file` 10 МБ × 3.
+`api`/`keycloak` отдают Prometheus-метрики (`/metrics`, `/auth/metrics`) изнутри сети; сборщик — опциональный профиль compose `monitoring` (`values.monitoring.enabled` в чарте), по умолчанию не поднимается:
+
+```bash
+docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env \
+  --env-file /srv/rtk-demo/.env.images --profile monitoring up -d
+```
+
+Поднимает Prometheus (TSDB на volume `prometheus_data`, история — `PROMETHEUS_RETENTION`, по умолчанию 15 дней) и Grafana с двумя дашбордами, провижининг которых — файлы в git (`compose/grafana/`, идентичны `charts/rtk-crm/files/grafana/` — сверяет `check_drift.py`), а не клики в UI: дашборд «API — здоровье и производительность» (запросы/с, доля ошибок, p50/p95/p99 с порогом 300 мс) и «бизнес-метрики и эксплуатация» (очередь, фоновые задачи, аудит, доступность зависимостей). Grafana — на `/grafana` за Caddy (`GF_SERVER_ROOT_URL`/`GF_SERVER_SERVE_FROM_SUB_PATH`, вход — `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` из `.env`, `gen_env.sh` генерирует пароль случайным). Таргет Prometheus `api:8000` — одно имя, не список реплик: подробности и разбор компромисса — комментарий в `compose/prometheus/prometheus.yml`. Через `bundle_install.sh`/`install.sh` — флаг `--monitoring`. Ротация логов — `json-file` 10 МБ × 3.
 
 ## Устранение неполадок
 

@@ -1,0 +1,17 @@
+# Провижининг источника данных Grafana (file-based provisioning, читается при каждом старте
+# контейнера — https://grafana.com/docs/grafana/latest/administration/provisioning/#data-sources).
+# Идентичен charts/rtk-crm/files/grafana/provisioning/datasources/datasource.yml (сверяет
+# scripts/check_drift.py). Единственный источник — Prometheus контура; имя "prometheus:9090"
+# резолвится и в compose (сервис prometheus), и в K8s (Service prometheus, см. чарт).
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    # Дашборды в git ссылаются на датасорс по фиксированному uid (см. dashboards/*.json) — правки
+    # через UI Grafana не должны иметь возможность его расшатать.
+    editable: false

@@ -1,0 +1,21 @@
+# Провижининг источника дашбордов Grafana (file-based provisioning): подхватывает JSON из каталога
+# /etc/grafana/dashboards (../../dashboards, смонтирован туда же отдельным volume'ом — см.
+# compose/docker-compose.yml, сервис grafana) при каждом старте контейнера. Дашборды живут в git, а не
+# только в sqlite самой Grafana — переживают переустановку и `docker compose down -v` тома grafana_data.
+# Идентичен charts/rtk-crm/files/grafana/provisioning/dashboards/dashboards.yml (сверяет
+# scripts/check_drift.py). См. RUNBOOK.md, «Мониторинг и логи».
+apiVersion: 1
+
+providers:
+  - name: rtk-crm
+    orgId: 1
+    folder: "RTK CRM"
+    type: file
+    # Файл убрали из каталога -> дашборд удаляется из Grafana при следующем скане (не остаётся
+    # сиротой); отредактировали в UI -> правка отбрасывается при следующем скане (ниже,
+    # allowUiUpdates: false) — источник правды всегда git, а не живая база Grafana.
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

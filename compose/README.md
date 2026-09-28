@@ -20,7 +20,9 @@ compose не стартует (fail closed) — так «в compose один dig
 - `docker-compose.yml` — сам стек. Профили: без флага — весь боевой стек (включая `web`);
   `integrations` — `mock-lms`/`mock-cms`; `registry` — внутренний registry (`127.0.0.1:5000`);
   `demo-data` — одноразовый `seed-demo` (node) с моковыми данными, его запускает `../scripts/seed_demo.sh`
-  после `up --wait` (только `APP_PROFILE=demo`; скрипты лежат в `../seed`).
+  после `up --wait` (только `APP_PROFILE=demo`; скрипты лежат в `../seed`); `monitoring` — Prometheus +
+  Grafana (дашборды по метрикам `api`/`keycloak` из `prometheus/`, `grafana/`), отдаётся через Caddy на
+  `/grafana` — см. `../RUNBOOK.md`, «Мониторинг и логи».
 - `.env.example` — переменные окружения (структура и дефолты как в `backend/.env.example`).
   Секретов там демо-значения; боевой `.env` генерирует `../scripts/gen_env.sh`.
 - `Caddyfile`, `postgres/init-keycloak-db.sh`, `seaweedfs/s3.json`, `keycloak/realm-crm.json`
@@ -65,7 +67,7 @@ Caddy; PostgreSQL — только на loopback хоста (`127.0.0.1:${POSTGR
 ```bash
 python3 ../scripts/render_env_images.py > /tmp/env.images
 docker compose --env-file .env.example --env-file /tmp/env.images \
-  --profile integrations --profile registry --profile demo-data config --quiet
+  --profile integrations --profile registry --profile demo-data --profile monitoring config --quiet
 ```
 
 Ничего не выводится, код возврата `0` — YAML и все `${...}`-подстановки валидны.
