@@ -114,6 +114,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      # Единственный сервис без start_period до этой правки: initdb + первый checkpoint на медленном
+      # диске (виртуалки с урезанным IO, LXC-контейнеры) заняли на практике 46-170 с (sync одного
+      # checkpoint — 35-60 с), а retries×interval без start_period давали только ~100 с, и `compose up
+      # --wait` падал раньше, чем Postgres успевал подтвердить готовность (caddy/api/keycloak/migrate
+      # оставались в Created — dependency failed to start). 180 с — запас, а не типичное время: на
+      # обычном диске healthy наступает намного раньше, start_period просто не считает эти секунды
+      # неудачами, паузу перед первой успешной попыткой он не создаёт.
+      start_period: 180s
     logging: *logging
     networks: [crm]
 
@@ -316,11 +324,18 @@ services:
       WAIT_FOR_POSTGRES: postgres:5432
       WAIT_FOR_REDIS: redis:6379
     healthcheck:
+      # timeout 10s было впритык: `arq ... --check` запускает НОВЫЙ процесс (полный импорт app,
+      # инициализация пула БД) — не лёгкий пинг, как у остальных сервисов. Живьём поймано здесь же
+      # (offline-e2e прогон): при одновременном холодном старте всего стека (api/keycloak/postgres
+      # разогреваются рядом) проверка стабильно занимала 10-12 с — воркер реально живой (крон тикает,
+      # health-лог пишется), но docker признавал таймаут на самой границе и `up --wait` падал
+      # с "container ... is unhealthy" ДО smoke-теста, без единой подсказки. 25s — запас, не типичное
+      # время; на обычном старте healthy наступает намного раньше.
       test: ["CMD", "arq", "app.worker.main.WorkerSettings", "--check"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+      timeout: 25s
+      retries: 5
+      start_period: 60s
     depends_on:
       seed:
         condition: service_completed_successfully

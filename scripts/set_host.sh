@@ -107,8 +107,23 @@ if [[ "${RESTART}" == 0 ]]; then
 fi
 
 # --- БД Keycloak: адреса клиента crm-bff -----------------------------------------------------------------
+# "postgres запущен" — недостаточное условие: свою схему (таблицы client/redirect_uris/...) создаёт САМ
+# Keycloak при первом старте (миграции Liquibase + импорт realm), и на холодном старте на медленном
+# диске это может занять дольше, чем postgres становится healthy. Раньше здесь проверялось только
+# "запущен ли postgres", и SQL ниже падал с `relation "redirect_uris" does not exist`, если Keycloak
+# ещё не успел — не отличить от реальной ошибки. Ждём появления таблицы отдельно, до минуты.
+PGUSER="$(env_get POSTGRES_USER)"; PGUSER="${PGUSER:-crm}"
+SCHEMA_READY=""
 if [[ -n "$(dc ps --status running --quiet postgres 2>/dev/null || true)" ]]; then
-  PGUSER="$(env_get POSTGRES_USER)"; PGUSER="${PGUSER:-crm}"
+  for _ in $(seq 1 20); do
+    if dc exec -T postgres psql -U "${PGUSER}" -d keycloak -tAc "SELECT 1 FROM client LIMIT 1" >/dev/null 2>&1; then
+      SCHEMA_READY=1
+      break
+    fi
+    sleep 3
+  done
+fi
+if [[ -n "${SCHEMA_READY}" ]]; then
   sql="BEGIN;"
   bff="SELECT c.id FROM client c JOIN realm r ON r.id = c.realm_id WHERE r.name = 'crm' AND c.client_id = 'crm-bff'"
   for uri in "${REDIRECTS[@]}"; do
@@ -120,12 +135,20 @@ if [[ -n "$(dc ps --status running --quiet postgres 2>/dev/null || true)" ]]; th
     sql+=" INSERT INTO web_origins (client_id, value) SELECT id, '${origin}' FROM (${bff}) b ON CONFLICT DO NOTHING;"
   done
   sql+=" COMMIT;"
-  if ! printf '%s\n' "${sql}" | dc exec -T postgres psql -U "${PGUSER}" -d keycloak -v ON_ERROR_STOP=1 -q >/dev/null; then
-    die "не удалось прописать адреса клиента crm-bff в БД Keycloak; .env уже изменён (копия ${BACKUP})"
+  if printf '%s\n' "${sql}" | dc exec -T postgres psql -U "${PGUSER}" -d keycloak -v ON_ERROR_STOP=1 -q >/dev/null; then
+    echo "set_host: клиент crm-bff: допустимые адреса добавлены (${REDIRECTS[*]})"
+  else
+    # Не die(): .env и файл realm уже переписаны, и containers ниже всё равно пересоздаются с новым
+    # окружением — обрыв здесь оставил бы стенд в перепутанном состоянии (.env на новый адрес,
+    # контейнеры на старый). Вместо этого предупреждаем и продолжаем: адреса клиента добавить вручную
+    # в консоли Keycloak (Clients -> crm-bff -> Valid redirect URIs), см. подсказку у --no-restart выше.
+    echo "set_host: ПРЕДУПРЕЖДЕНИЕ: не удалось прописать адреса клиента crm-bff в БД Keycloak — добавьте вручную" \
+         "в консоли Keycloak (Clients -> crm-bff): ${REDIRECTS[*]}. Установка продолжается, стек будет пересоздан." >&2
   fi
-  echo "set_host: клиент crm-bff: допустимые адреса добавлены (${REDIRECTS[*]})"
 else
-  echo "set_host: postgres не запущен — БД Keycloak не правлю (при первом запуске realm импортируется из runtime)"
+  echo "set_host: БД Keycloak не готова (postgres не запущен или Keycloak ещё не создал схему при первом старте)" \
+       "— адреса клиента не правлю; при первом запуске realm импортируется из runtime, иначе добавьте вручную" \
+       "в консоли Keycloak (Clients -> crm-bff): ${REDIRECTS[*]}"
 fi
 
 # --- применить окружение ---------------------------------------------------------------------------------

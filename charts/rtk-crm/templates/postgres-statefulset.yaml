@@ -82,6 +82,17 @@ spec:
               mountPath: /docker-entrypoint-initdb.d/10-keycloak.sh
               subPath: 10-keycloak.sh
               readOnly: true
+          # startupProbe (не initialDelaySeconds на liveness/readiness — тот на медленном хранилище
+          # означал бы перезапуск Postgres по liveness ДО того, как он успел подняться, только хуже):
+          # пока не пройдёт хотя бы раз, liveness/readiness не запускаются вовсе. periodSeconds×
+          # failureThreshold = 300 с — запас на холодный старт (initdb + первый checkpoint) на медленном
+          # диске, см. тот же комментарий у postgres в compose/docker-compose.yml.
+          startupProbe:
+            exec:
+              command: ["sh", "-c", "pg_isready -U {{ .Values.env.postgresUser }} -d {{ .Values.env.postgresDb }}"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             exec:
               command: ["sh", "-c", "pg_isready -U {{ .Values.env.postgresUser }} -d {{ .Values.env.postgresDb }}"]
