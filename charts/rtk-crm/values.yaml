@@ -259,6 +259,9 @@ env:
 
   # Grafana (monitoring.enabled) — GF_SECURITY_ADMIN_USER; пароль отдельно, в secrets ниже.
   grafanaAdminUser: admin
+  # Гость без пароля (GF_AUTH_ANONYMOUS_*): true — дашборды открыты всем с ролью Viewer (только чтение).
+  # Метрики станут публичными, включать только на демо-стенде.
+  grafanaAnonymousViewer: false
   # Хранение истории метрик Prometheus (TSDB на PVC persistence.prometheus).
   prometheusRetention: 15d
 

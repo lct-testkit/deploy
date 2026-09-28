@@ -36,9 +36,11 @@
 	# а наши script-src 'self' и DENY их блокировали — консоль вечно крутила индикатор. Там действуют
 	# собственные CSP (frame-ancestors 'self') и SAMEORIGIN Keycloak. `>` — отложенная установка:
 	# перекрывает заголовки апстрима, как и раньше.
-	@app_csp not path /auth/*
+	# И не для /grafana/*: интерфейс Grafana грузит inline-скрипты (grafanaBootData, тема), правит <base href>
+	# и использует eval — наши script-src 'self' и base-uri 'none' оставляли страницу пустой. Свои заголовки у Grafana.
+	@app_csp not path /auth/* /grafana/*
 	header @app_csp >Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: {$S3_ORIGIN}; connect-src 'self' {$S3_ORIGIN}; style-src 'self' 'unsafe-inline'; script-src {$CSP_SCRIPT_SRC:'self'}; worker-src 'self' blob:; object-src 'self' blob:; frame-src 'self' blob: {$S3_ORIGIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-	@app_frame not path /auth/*
+	@app_frame not path /auth/* /grafana/*
 	header @app_frame >X-Frame-Options "DENY"
 
 	@no_request_id not header X-Request-Id *
