@@ -14,6 +14,25 @@ spec:
       port: 8000
       targetPort: http
 ---
+# Headless Service: DNS-имя api-pods резолвится во ВСЕ IP подов api (а не в один ClusterIP). Нужен Prometheus:
+# счётчики prometheus_client живут в памяти процесса, поэтому скрейпить надо каждую реплику отдельно
+# (dns_sd_configs в files/prometheus/prometheus.yml — тот же файл, что в compose, где api-pods — сетевой алиас).
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-pods
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
