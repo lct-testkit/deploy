@@ -21,7 +21,7 @@ compose не стартует (fail closed) — так «в compose один dig
   `integrations` — `mock-lms`/`mock-cms`; `registry` — внутренний registry (`127.0.0.1:5000`);
   `demo-data` — одноразовый `seed-demo` (node) с моковыми данными, его запускает `../scripts/seed_demo.sh`
   после `up --wait` (только `APP_PROFILE=demo`; скрипты лежат в `../seed`); `monitoring` — Prometheus +
-  Grafana (дашборды по метрикам `api`/`keycloak` из `prometheus/`, `grafana/`), отдаётся через Caddy на
+  Grafana (дашборды по метрикам `api`/`worker`/`keycloak` из `prometheus/`, `grafana/`), отдаётся через Caddy на
   `/grafana` — см. `../RUNBOOK.md`, «Мониторинг и логи».
 - `.env.example` — переменные окружения (структура и дефолты как в `backend/.env.example`).
   Секретов там демо-значения; боевой `.env` генерирует `../scripts/gen_env.sh`.

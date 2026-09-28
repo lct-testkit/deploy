@@ -2,7 +2,7 @@
   "id": null,
   "uid": "rtk-business-ops",
   "title": "RTK CRM — бизнес-метрики и эксплуатация",
-  "description": "Очередь, фоновые задачи, аудит и доступность зависимостей — backend/app/core/metrics.py. SLA-панель помечена отдельно: соответствующие счётчики объявлены в backend, но пока нигде не инкрементируются (см. описание панели и тело PR).",
+  "description": "Очередь, фоновые задачи, SLA, отчёты, импорт, кэш, аудит и доступность зависимостей — backend/app/core/metrics.py. Метрики api собирает job api, метрики воркера arq — job worker (см. prometheus.yml).",
   "tags": ["rtk-crm", "ops"],
   "timezone": "",
   "editable": false,
@@ -19,7 +19,7 @@
       "id": 1,
       "type": "stat",
       "title": "Таргеты Prometheus",
-      "description": "Встроенная метрика Prometheus `up` по каждому job из prometheus.yml — доступен ли сам эндпоинт /metrics (не путать со следующей панелью: там — что о своих зависимостях думает само приложение).",
+      "description": "Встроенная метрика Prometheus `up` по каждой реплике каждого job из prometheus.yml (api, worker, keycloak, prometheus) — доступен ли сам эндпоинт /metrics (не путать со следующей панелью: там — что о своих зависимостях думает само приложение).",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
       "fieldConfig": {
@@ -41,7 +41,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "up{job=~\"api|keycloak|prometheus\"}",
+          "expr": "up{job=~\"api|worker|keycloak|prometheus\"}",
           "legendFormat": "{{job}} {{instance}}",
           "instant": true
         }
@@ -51,7 +51,7 @@
       "id": 2,
       "type": "stat",
       "title": "Зависимости приложения (/health/ready)",
-      "description": "crm_dependency_up{dependency} — что сам backend думает о доступности postgres/redis/keycloak/очереди/хранилища (app/api/health.py, пересчитывается на каждый вызов /health/ready).",
+      "description": "crm_dependency_up{dependency} — что сам backend думает о доступности postgres/redis/keycloak/очереди/хранилища. api пересчитывает при каждом scrape /metrics (проверки с таймаутом 1 с, кэш 5 с — app/core/dependency_metrics.py), поэтому значение свежее даже у реплики, куда не ходил /health/ready. Между репликами api берётся min: DOWN, если хоть одна реплика не видит зависимость.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 6, "w": 8, "x": 8, "y": 0 },
       "fieldConfig": {
@@ -82,8 +82,8 @@
     {
       "id": 3,
       "type": "stat",
-      "title": "SLA и отчёты — ждут подключения в backend",
-      "description": "crm_sla_violations_total, crm_sla_breaching_deals и crm_reports_in_progress объявлены в backend/app/core/metrics.py, но на момент добавления этой панели (сентябрь 2026) ни разу не вызываются нигде в коде backend — ни sweep_sla_breaches (app/modules/crm/tasks.py), ни генерация отчётов не пишут в них, только в structlog/БД. Панель останется пустой (No data), пока backend не добавит .labels(...).inc()/.set() в нужных местах — см. тело PR со ссылками на конкретные файлы.",
+      "title": "SLA и отчёты",
+      "description": "Метрики воркера (job worker). crm_sla_breaching_deals{sla_state=\"breached\"} — число открытых сделок с нарушенным SLA; выставляется каждым проходом sweep_sla_breaches (раз в 15 минут), поэтому после перезапуска воркера до первого прохода ряда нет. cron-задача идёт на одной реплике, у остальных gauge остаётся с прошлого запуска — берём max по репликам. crm_sla_violations_total — сделки, перешедшие в breached; здесь их число за час (sum по воронкам и статусам). crm_reports_in_progress — отчёты, рендерящиеся сейчас (sum по репликам); лимит одного тика — REPORTS_MAX_CONCURRENT, но тики могут перекрываться, и значение выше лимита — сигнал, что рендер длится дольше минуты.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 6, "w": 8, "x": 16, "y": 0 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
@@ -99,15 +99,15 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "max(crm_sla_breaching_deals)",
+          "expr": "max(crm_sla_breaching_deals{sla_state=\"breached\"})",
           "legendFormat": "сделок с нарушенным SLA",
           "instant": true
         },
         {
           "refId": "B",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(rate(crm_sla_violations_total[5m]))",
-          "legendFormat": "нарушений SLA/с",
+          "expr": "sum(increase(crm_sla_violations_total[1h]))",
+          "legendFormat": "нарушений SLA за час",
           "instant": true
         },
         {
@@ -148,7 +148,7 @@
       "id": 5,
       "type": "timeseries",
       "title": "Длина очереди arq",
-      "description": "crm_queue_depth{queue} — снимается при каждом /health/ready (app/core/redis_client.py, zcard arq:queue).",
+      "description": "crm_queue_depth{queue} — zcard arq:queue, снимается api при каждом scrape /metrics (app/core/redis_client.py). Если Redis не отвечает, ряд пропадает (разрыв на графике), а не держится на старом значении; при нескольких репликах api берётся max.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "fieldConfig": {
@@ -169,20 +169,20 @@
       "id": 6,
       "type": "table",
       "title": "Фоновые задачи за последний час",
-      "description": "sum by (task) (increase(crm_background_tasks_total[1h])). Метка result сейчас всегда \"success\" — ни один из периодических sweep-джобов backend пока не пишет result=\"failure\"/\"error\" при исключении, поэтому это счётчик запусков (\"жив ли джоб вообще\"), а не честный success-rate: задача, переставшая работать, здесь просто исчезнет из таблицы или уйдёт в 0, а не покажет ошибку.",
+      "description": "sum by (task, result) (increase(crm_background_tasks_total[1h])) — запуски задач воркера arq за час (job worker, все реплики). result=success — задача отработала, failure — упала с исключением или была отменена (в том числе по job_timeout). Задачи, которой нет в таблице, за час не было (или воркер не отдаёт метрики — см. панель «Таргеты Prometheus»). Первый запуск после старта воркера не даёт приращения: increase() считает разницу между точками.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "align": "auto" } }, "overrides": [] },
       "options": { "showHeader": true, "sortBy": [{ "displayName": "Value", "desc": true }] },
       "transformations": [
         { "id": "labelsToFields", "options": {} },
-        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "result": true } } }
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true } } }
       ],
       "targets": [
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (task) (increase(crm_background_tasks_total[1h]))",
+          "expr": "sum by (task, result) (increase(crm_background_tasks_total[1h]))",
           "format": "table",
           "instant": true
         }
@@ -192,7 +192,7 @@
       "id": 7,
       "type": "timeseries",
       "title": "Записи аудита/с по действию",
-      "description": "sum by (action) (rate(crm_audit_records_total[5m])) — backend/app/modules/audit/service.py.",
+      "description": "sum by (action) (rate(crm_audit_records_total[5m])) — backend/app/modules/audit/service.py. Записи аудита делают api и воркер (job api + job worker), поэтому суммируются оба источника.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
       "fieldConfig": {
@@ -206,6 +206,83 @@
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "sum by (action) (rate(crm_audit_records_total[5m]))",
           "legendFormat": "{{action}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Длительность фоновых задач (p95)",
+      "description": "histogram_quantile(0.95, sum by (le, task) (rate(crm_background_task_duration_seconds_bucket[15m]))) — job worker, все реплики. Окно 15 минут: задачи идут по cron раз в минуту и реже, на коротком окне ряд рвётся. Бакеты гистограммы — от 0,1 с до 1 ч (app/core/metrics.py).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 22 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "min": 0, "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "histogram_quantile(0.95, sum by (le, task) (rate(crm_background_task_duration_seconds_bucket[15m])))",
+          "legendFormat": "{{task}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "stat",
+      "title": "Кэш графа воронки: доля попаданий",
+      "description": "sum by (cache) (rate(crm_cache_requests_total{result=\"hit\"}[15m])) / sum by (cache) (rate(crm_cache_requests_total[15m])) — job api, все реплики. Промахом считается и запись с устаревшим хэшем графа, и недоступный Redis (граф берётся из БД). Ряда нет, пока по воронкам не было ни одного перехода сделки.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 22 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "orange", "value": 0.5 }, { "color": "green", "value": 0.9 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "horizontal",
+        "textMode": "value_and_name",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (cache) (rate(crm_cache_requests_total{result=\"hit\"}[15m])) / sum by (cache) (rate(crm_cache_requests_total[15m]))",
+          "legendFormat": "{{cache}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Импорт: строки за сутки",
+      "description": "sum by (entity_type, status) (increase(crm_import_rows_total[24h])) — job worker. Применение: applied / skipped / error, откат: rolled_back / rollback_blocked. Длительность импорта — crm_import_duration_seconds{phase=\"validate|apply\"} (у отката момента старта в задании нет).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 22 },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "align": "auto" } }, "overrides": [] },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Value", "desc": true }] },
+      "transformations": [
+        { "id": "labelsToFields", "options": {} },
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true } } }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "sum by (entity_type, status) (increase(crm_import_rows_total[24h]))",
+          "format": "table",
+          "instant": true
         }
       ]
     }

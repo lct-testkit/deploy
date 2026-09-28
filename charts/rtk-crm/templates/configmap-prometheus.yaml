@@ -1,5 +1,5 @@
 # prometheus.yml — идентичен compose/prometheus/prometheus.yml (сверяет scripts/check_drift.py):
-# таргет api-pods (все реплики) верен для обоих способов раскладки, см. комментарий в самом файле.
+# таргеты api-pods и worker (все реплики) верны для обоих способов раскладки, см. комментарий в самом файле.
 {{- if .Values.monitoring.enabled }}
 apiVersion: v1
 kind: ConfigMap

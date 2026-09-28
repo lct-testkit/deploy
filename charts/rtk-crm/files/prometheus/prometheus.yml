@@ -13,12 +13,13 @@ scrape_configs:
 
   # backend/app/core/metrics.py: RED-метрики (crm_http_requests_total, crm_http_request_duration_seconds —
   # гистограмма с бакетами под бюджет p95 <= 300 мс, crm_http_errors_total), crm_audit_records_total (записи,
-  # сделанные в процессе api), crm_dependency_up и crm_queue_depth (обновляются при обращении к
-  # /health/ready). Отдаётся на /metrics без префикса и без авторизации (backend/app/api/health.py) —
-  # доступно только внутри сети crm, Caddy отдаёт на него 404 снаружи (см. Caddyfile).
-  # Метрики фоновых задач (crm_background_tasks_total, SLA, отчёты) живут в процессе воркера arq, у
-  # которого своего /metrics пока нет, поэтому сюда не попадают: соответствующие панели дашборда
-  # business-ops пусты, пока backend не начнёт их отдавать (см. описания панелей).
+  # сделанные в процессе api), crm_cache_requests_total (кэш графа воронки), crm_dependency_up и
+  # crm_queue_depth (backend пересчитывает их на каждый scrape /metrics: проверки с таймаутом 1 с, результат
+  # кэшируется на 5 с, — а не только при обращении к /health/ready). Отдаётся на /metrics без префикса и без
+  # авторизации (backend/app/api/health.py) — доступно только внутри сети crm, Caddy отдаёт на него 404
+  # снаружи (см. Caddyfile).
+  # Метрики фоновых задач (crm_background_tasks_total, SLA, отчёты, импорт) живут в процессе воркера arq и
+  # собираются отдельным job "worker" ниже.
   #
   # Таргет — КАЖДАЯ реплика api, а не общее имя сервиса. Счётчики и гистограммы prometheus_client живут
   # в памяти процесса, а у api один uvicorn-воркер на контейнер, масштабирование — репликами
@@ -36,6 +37,25 @@ scrape_configs:
       - names: ["api-pods"]
         type: A
         port: 8000
+        refresh_interval: 15s
+
+  # Воркер arq (backend/app/worker/main.py): свой /metrics на порту WORKER_METRICS_PORT (9101 по умолчанию,
+  # prometheus_client.start_http_server в on_startup; 0 — выключен). Здесь порт зашит: deploy
+  # WORKER_METRICS_PORT не переопределяет, а сменивший его должен поправить и эту строку. Там живут
+  # crm_background_tasks_total и crm_background_task_duration_seconds (по одной серии на задачу), SLA
+  # (crm_sla_breaching_deals, crm_sla_violations_total), crm_reports_in_progress, crm_import_rows_total и
+  # crm_import_duration_seconds. Таргет — каждая реплика, по той же причине, что у api: счётчики живут в
+  # памяти процесса. DNS-имя worker резолвится во ВСЕ IP реплик: в compose это имя сервиса, в Kubernetes —
+  # headless Service worker (templates/worker-deployment.yaml).
+  # Cron-задача на каждый тик уходит одной из реплик (arq не запускает её дважды), поэтому gauge вроде
+  # crm_sla_breaching_deals у остальных реплик остаётся с прошлого запуска: дашборд агрегирует такие
+  # значения max(...), а счётчики — sum(...).
+  - job_name: worker
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names: ["worker"]
+        type: A
+        port: 9101
         refresh_interval: 15s
 
   # KC_METRICS_ENABLED=true (см. docker-compose.yml/values.yaml) выставляет метрики на

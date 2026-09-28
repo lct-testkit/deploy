@@ -200,6 +200,9 @@ env:
   appProfile: demo
   logLevel: INFO
   logJson: "true"
+  # Свой /metrics воркера — совпадает с портом в Service/healthcheck worker-deployment.yaml
+  # и job worker в files/prometheus/prometheus.yml; поменяли тут — поправьте и там.
+  workerMetricsPort: 9101
 
   postgresUser: crm
   postgresDb: crm
