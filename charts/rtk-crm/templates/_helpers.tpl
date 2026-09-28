@@ -144,6 +144,8 @@ $(VAR)-подстановку в поле `value:` только для пере�
   value: {{ .Values.env.logLevel | quote }}
 - name: LOG_JSON
   value: {{ .Values.env.logJson | quote }}
+- name: WORKER_METRICS_PORT
+  value: {{ .Values.env.workerMetricsPort | quote }}
 - name: CMS_WEBHOOK_SECRET_REF
   value: {{ .Values.env.cmsWebhookSecretRef | quote }}
 - name: LMS_BASE_URL

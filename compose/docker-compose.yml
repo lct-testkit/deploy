@@ -60,6 +60,9 @@ x-api-env: &api-env
   SMS_GATEWAY_URL: http://sms-gateway-mock:8090
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   LOG_JSON: ${LOG_JSON:-true}
+  # Свой /metrics воркера (см. worker ниже и prometheus/prometheus.yml, job worker). Значение зашито
+  # тем же числом в Service/healthcheck воркера — поменяли порт здесь, поправьте и там.
+  WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9101}
   CMS_WEBHOOK_SECRET_REF: ${CMS_WEBHOOK_SECRET_REF:-}
   LMS_BASE_URL: ${LMS_BASE_URL:-}
   LMS_AUTH_REF: ${LMS_AUTH_REF:-}
