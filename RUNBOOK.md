@@ -232,14 +232,14 @@ docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-dem
   --env-file /srv/rtk-demo/.env.images logs -f api
 ```
 
-`api`/`keycloak` отдают Prometheus-метрики (`/metrics`, `/auth/metrics`) изнутри сети; сборщик — опциональный профиль compose `monitoring` (`values.monitoring.enabled` в чарте), по умолчанию не поднимается:
+`api`, `worker` и `keycloak` отдают Prometheus-метрики (`/metrics` на порту 8000 у api и 9101 у воркера arq, `/auth/metrics` у Keycloak) изнутри сети; сборщик — опциональный профиль compose `monitoring` (`values.monitoring.enabled` в чарте), по умолчанию не поднимается:
 
 ```bash
 docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env \
   --env-file /srv/rtk-demo/.env.images --profile monitoring up -d
 ```
 
-Поднимает Prometheus (TSDB на volume `prometheus_data`, история — `PROMETHEUS_RETENTION`, по умолчанию 15 дней) и Grafana с двумя дашбордами, провижининг которых — файлы в git (`compose/grafana/`, идентичны `charts/rtk-crm/files/grafana/` — сверяет `check_drift.py`), а не клики в UI: дашборд «API — здоровье и производительность» (запросы/с, доля ошибок, p50/p95/p99 с порогом 300 мс) и «бизнес-метрики и эксплуатация» (очередь, фоновые задачи, аудит, доступность зависимостей). Grafana — на `/grafana` за Caddy (`GF_SERVER_ROOT_URL`/`GF_SERVER_SERVE_FROM_SUB_PATH`, вход — `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` из `.env`, `gen_env.sh` генерирует пароль случайным). Prometheus скрейпит каждую реплику api отдельно (`dns_sd_configs` по имени `api-pods`: в compose это сетевой алиас сервиса `api`, в чарте — headless Service): счётчики prometheus_client живут в памяти процесса, а один общий таргет отдавал бы каждому scrape случайную реплику и портил `rate()`; подробности — комментарий в `compose/prometheus/prometheus.yml`. Через `bundle_install.sh`/`install.sh` — флаг `--monitoring`. Ротация логов — `json-file` 10 МБ × 3.
+Поднимает Prometheus (TSDB на volume `prometheus_data`, история — `PROMETHEUS_RETENTION`, по умолчанию 15 дней) и Grafana с двумя дашбордами, провижининг которых — файлы в git (`compose/grafana/`, идентичны `charts/rtk-crm/files/grafana/` — сверяет `check_drift.py`), а не клики в UI: дашборд «API — здоровье и производительность» (запросы/с, доля ошибок, p50/p95/p99 с порогом 300 мс) и «бизнес-метрики и эксплуатация» (очередь, фоновые задачи и их длительность, SLA, отчёты, импорт, кэш графа воронки, аудит, доступность зависимостей). Grafana — на `/grafana` за Caddy (`GF_SERVER_ROOT_URL`/`GF_SERVER_SERVE_FROM_SUB_PATH`, вход — `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` из `.env`, `gen_env.sh` генерирует пароль случайным). Prometheus скрейпит каждую реплику api и воркера отдельно (`dns_sd_configs` по имени `api-pods` — в compose сетевой алиас сервиса `api`, в чарте headless Service — и по имени `worker` — в compose имя сервиса, в чарте headless Service): счётчики prometheus_client живут в памяти процесса, а один общий таргет отдавал бы каждому scrape случайную реплику и портил `rate()`; подробности — комментарий в `compose/prometheus/prometheus.yml`. Через `bundle_install.sh`/`install.sh` — флаг `--monitoring`. Ротация логов — `json-file` 10 МБ × 3.
 
 ## Устранение неполадок
 

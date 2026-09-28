@@ -1,5 +1,28 @@
-# worker — arq, без HTTP-порта, поэтому без Service (ничего не обращается к
-# нему по сети, только читает очередь Redis — как и в backend/docker-compose.yml).
+# worker — arq: приложениям по сети он не нужен (только читает очередь Redis, как и в
+# backend/docker-compose.yml), поэтому Service ниже — только для Prometheus.
+#
+# Headless Service: DNS-имя worker резолвится во ВСЕ IP подов воркера. Свой /metrics воркер отдаёт на
+# порту WORKER_METRICS_PORT (9101 по умолчанию, backend/app/core/metrics.py); счётчики живут в памяти
+# процесса, поэтому скрейпить надо каждую реплику отдельно (dns_sd_configs, job worker в
+# files/prometheus/prometheus.yml — тот же файл, что в compose, где worker — имя сервиса).
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "worker") | nindent 4 }}
+spec:
+  clusterIP: None
+  # Как у api-pods: неготовый под остаётся в DNS, Prometheus видит у него up=0, а не теряет молча.
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "worker") | nindent 4 }}
+  ports:
+    - name: metrics
+      port: 9101
+      targetPort: metrics
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -31,6 +54,9 @@ spec:
           image: "{{ include "rtk-crm.apiImage" . }}"
           imagePullPolicy: {{ .Values.images.pullPolicy }}
           args: ["worker"]
+          ports:
+            - name: metrics
+              containerPort: 9101
           env:
             {{- include "rtk-crm.apiEnv" . | nindent 12 }}
             - name: WAIT_FOR_POSTGRES
