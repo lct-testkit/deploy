@@ -58,6 +58,22 @@ images:
     repository: docker.io/cturra/ntp
     tag: latest
     digest: "sha256:7224d4e7c7833aabbcb7dd70c46c8a8dcccda365314c6db047b9b10403ace3bc"
+  prometheus:
+    # Опционально — см. monitoring.enabled ниже. tag/digest — как у остальных внешних образов, из
+    # ../../images.yaml.
+    repository: docker.io/prom/prometheus
+    tag: v3.15.0
+    digest: "sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e"
+  grafana:
+    repository: docker.io/grafana/grafana
+    tag: "13.2.2"
+    digest: "sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0"
+
+# Prometheus + Grafana (дашборды по метрикам API) — тот же смысл, что профиль compose `monitoring`:
+# опционально, по умолчанию выключено, не часть базовой установки чарта. Включить:
+# `--set monitoring.enabled=true` (или свой values-prod.yaml).
+monitoring:
+  enabled: false
 
 # Реплики. Только api/worker осмысленно масштабировать (stateless, за
 # Service с ClusterIP/least_conn-подобной балансировкой kube-proxy).
@@ -105,6 +121,12 @@ resources:
   ntp:
     requests: { cpu: 10m, memory: 16Mi }
     limits: { cpu: 100m, memory: 32Mi }
+  prometheus:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+  grafana:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 250m, memory: 256Mi }
   migrate:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: 500m, memory: 512Mi }
@@ -123,6 +145,14 @@ persistence:
     accessModes: ["ReadWriteOnce"]
   seaweedfs:
     size: 10Gi
+    storageClassName: ""
+    accessModes: ["ReadWriteOnce"]
+  prometheus:
+    size: 5Gi
+    storageClassName: ""
+    accessModes: ["ReadWriteOnce"]
+  grafana:
+    size: 1Gi
     storageClassName: ""
     accessModes: ["ReadWriteOnce"]
 
@@ -227,6 +257,11 @@ env:
   smtpFrom: ""
   smtpStarttls: "true"
 
+  # Grafana (monitoring.enabled) — GF_SECURITY_ADMIN_USER; пароль отдельно, в secrets ниже.
+  grafanaAdminUser: admin
+  # Хранение истории метрик Prometheus (TSDB на PVC persistence.prometheus).
+  prometheusRetention: 15d
+
 # Секреты — шаблонизируются в Kubernetes Secret (см. templates/secret.yaml),
 # НЕ зашиты напрямую в Deployment/Job. Значения по умолчанию — те же
 # демо-дефолты, что в backend/.env.example (нужны, чтобы demo-seed и
@@ -243,6 +278,7 @@ secrets:
   signatureServerSecret: "change-me-in-prod" # CHANGE ME for any real deployment
   s3AccessKey: "crm_access"                  # CHANGE ME for any real deployment
   s3SecretKey: "crm_secret_key"              # CHANGE ME for any real deployment
+  grafanaAdminPassword: "admin"              # CHANGE ME for any real deployment (monitoring.enabled)
   # Пусто по умолчанию — функции выключены (хэш аудита v2, настройки не шифруются, почта не настроена),
   # как в backend/.env.example. Значение — только через Secret (--set secrets.xxx=... или values-prod.yaml).
   auditHmacKey: ""

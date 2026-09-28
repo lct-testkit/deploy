@@ -1,0 +1,14 @@
+# prometheus.yml — идентичен compose/prometheus/prometheus.yml (сверяет scripts/check_drift.py):
+# таргет "api:8000" верен для обоих способов раскладки, см. комментарий в самом файле.
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "prometheus") | nindent 4 }}
+data:
+  prometheus.yml: |-
+{{ .Files.Get "files/prometheus/prometheus.yml" | indent 4 }}
+{{- end }}

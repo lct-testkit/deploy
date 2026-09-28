@@ -95,13 +95,16 @@ render --mode bundle > "${STAGE}/env/images.bundle.env"
 # --- 3. compose и скрипты: отсутствие любого файла — ошибка --------------------
 for f in compose/docker-compose.yml compose/.env.example compose/Caddyfile \
          compose/keycloak/realm-crm.json compose/seaweedfs/s3.json compose/postgres/init-keycloak-db.sh \
+         compose/prometheus/prometheus.yml compose/grafana/provisioning/datasources/datasource.yml \
+         compose/grafana/provisioning/dashboards/dashboards.yml compose/grafana/dashboards/api-overview.json \
+         compose/grafana/dashboards/business-ops.json \
          scripts/gen_env.sh scripts/lib_host.sh scripts/set_host.sh scripts/registry_load.sh scripts/smoke.sh \
          scripts/bundle_install.sh scripts/seed_demo.sh compose/fonts/.gitkeep \
          seed/run.sh seed/lib.mjs seed/seed-demo.mjs seed/catalogs.mjs seed/erasure.mjs; do
   [[ -f "${f}" ]] || { echo "нет файла ${f} — бандл был бы неполным" >&2; exit 1; }
 done
 cp compose/docker-compose.yml compose/.env.example compose/Caddyfile "${STAGE}/compose/"
-cp -r compose/keycloak compose/seaweedfs compose/postgres "${STAGE}/compose/"
+cp -r compose/keycloak compose/seaweedfs compose/postgres compose/prometheus compose/grafana "${STAGE}/compose/"
 cp scripts/gen_env.sh scripts/lib_host.sh scripts/set_host.sh scripts/registry_load.sh scripts/smoke.sh scripts/seed_demo.sh "${STAGE}/scripts/"
 cp compose/fonts/.gitkeep "${STAGE}/compose/fonts/"
 cp seed/*.mjs seed/run.sh seed/README.md "${STAGE}/seed/"
@@ -131,6 +134,7 @@ bash install.sh --profile demo --host crm.example.local --seed   # демо-ст
 bash install.sh --profile demo --no-seed                         # демо-стенд, чистая система
 bash install.sh --profile prod --host crm.example.local          # боевое окружение (без демо-входа и моковых данных)
 bash install.sh --registry          # дополнительно поднять внутренний registry (localhost:5000)
+bash install.sh --monitoring        # дополнительно поднять Prometheus + Grafana (дашборды на /grafana)
 \`\`\`
 
 Домен и TLS: \`--tls acme\` (Let's Encrypt, публичный домен), \`--tls internal\` (самоподписанный, закрытый контур

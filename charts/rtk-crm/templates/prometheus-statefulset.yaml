@@ -1,0 +1,104 @@
+# prometheus — единственный инстанс (TSDB, не кластер), тот же принцип, что postgres/redis/seaweedfs
+# (см. комментарий в postgres-statefulset.yaml: реплики намеренно не в values.yaml). Опционально —
+# см. values.monitoring.enabled (тот же смысл, что профиль compose `monitoring`: не часть базовой
+# установки чарта).
+#
+# Headless Service (clusterIP: None), как у postgres/redis/seaweedfs: реплика ровно одна, DNS-имя
+# "prometheus" достаточно резолвить в неё напрямую — отдельный ClusterIP-балансировщик тут не нужен
+# (Grafana обращается по этому же имени как к датасорсу — см. files/grafana/provisioning/datasources).
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "prometheus") | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "prometheus") | nindent 4 }}
+  ports:
+    - name: http
+      port: 9090
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "prometheus") | nindent 4 }}
+spec:
+  serviceName: prometheus
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "prometheus") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "prometheus") | nindent 8 }}
+      annotations:
+        checksum/config: {{ .Files.Get "files/prometheus/prometheus.yml" | sha256sum }}
+    spec:
+      {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
+      # Официальный образ prom/prometheus слушает под непривилегированным пользователем "nobody"
+      # (не root) и пишет TSDB в /prometheus — на СВЕЖЕМ PVC (в отличие от docker-compose, где именованный
+      # volume наследует владельца от каталога внутри образа при первом использовании) каталог обычно
+      # достаётся root:root, и nobody не сможет в него писать без fsGroup. Тот же приём использует
+      # официальный Helm-чарт Prometheus.
+      securityContext:
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: "{{ include "rtk-crm.externalImage" .Values.images.prometheus }}"
+          imagePullPolicy: {{ .Values.images.pullPolicy }}
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time={{ .Values.env.prometheusRetention }}
+          ports:
+            - name: http
+              containerPort: 9090
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+              readOnly: true
+            - name: prometheus-data
+              mountPath: /prometheus
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            {{- toYaml .Values.resources.prometheus | nindent 12 }}
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+  volumeClaimTemplates:
+    - metadata:
+        name: prometheus-data
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.prometheus.accessModes | nindent 10 }}
+        {{- if .Values.persistence.prometheus.storageClassName }}
+        storageClassName: {{ .Values.persistence.prometheus.storageClassName }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.prometheus.size }}
+{{- end }}

@@ -25,6 +25,7 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `compose/` | Прод-профиль docker-compose. Литералов образов нет — только `<ИМЯ>_IMAGE` из `.env.images` |
 | `charts/rtk-crm/` | Helm-чарт (та же топология); проверяется lint + kubeconform + drift |
 | `mocks/lms`, `mocks/cms` | Заглушки внешних контрактов (LMS, Laravel CMS), профиль compose `integrations` |
+| `compose/prometheus/`, `compose/grafana/` | Профиль compose `monitoring` / `values.monitoring.enabled` в чарте: Prometheus (TSDB на volume) + Grafana (датасорс и 2 дашборда — file-based provisioning, не через UI), `/grafana` за Caddy |
 | `scripts/render_env_images.py` | `images.yaml` → `.env.images` (режимы `digest` / `bundle` / `registry`) |
 | `scripts/gen_env.sh`, `lib_host.sh` | Секреты + согласованные `runtime/keycloak/realm-crm.json` и `runtime/seaweedfs/s3.json`; `--host`, `--tls off\|internal\|acme`, `--fonts`, `--port-offset`. `lib_host.sh` — общие функции адреса и режима TLS |
 | `scripts/set_host.sh` | Смена адреса и режима TLS у установленного стенда: `.env`, realm, адреса клиента в БД Keycloak, перезапуск |
@@ -57,7 +58,7 @@ python scripts/validate_images.py images.yaml
 python scripts/check_drift.py --backend-dir ../backend
 python scripts/render_env_images.py > /tmp/env.images
 docker compose -f compose/docker-compose.yml --env-file compose/.env.example --env-file /tmp/env.images \
-  --profile integrations --profile registry --profile demo-data config --quiet
+  --profile integrations --profile registry --profile demo-data --profile monitoring config --quiet
 yamllint --strict -c .yamllint.yml .
 bash scripts/e2e_stack.sh --with-restore     # нужен docker login ghcr.io; ~5–8 минут
 ```
