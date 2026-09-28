@@ -80,6 +80,8 @@
 	# Grafana (values.monitoring.enabled) — дашборды по метрикам Prometheus. `handle`, не `handle_path`:
 	# та же логика, что у /auth/* и в compose/Caddyfile (комментарий там подробнее) — GF_SERVER_SERVE_FROM_SUB_PATH=true
 	# + GF_SERVER_ROOT_URL=.../grafana/ в grafana-statefulset.yaml сами держат префикс, срезать его тут нельзя.
+	# `/grafana` без слэша иначе не совпал бы с `/grafana/*` и ушёл в SPA-фолбэк клиента (200 с интерфейсом CRM).
+	redir /grafana /grafana/ 308
 	handle /grafana/* {
 		reverse_proxy grafana:3000
 	}
