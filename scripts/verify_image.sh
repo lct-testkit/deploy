@@ -7,6 +7,11 @@
 #   scripts/verify_image.sh <image> <tag> <digest> [registry-prefix]
 #
 # Требует предварительного `docker login ghcr.io` токеном с read:packages.
+#
+# Платформы: манифест-индекс обязан содержать все архитектуры из REQUIRE_ARCHES
+# (через пробел, по умолчанию только amd64 — прод и офлайн-бандл ставятся на x86).
+# Образ, собранный на aarch64-раннере без --platform, был бы arm64-only и не
+# запустился бы на прод-сервере, хотя digest и тег «правильные».
 set -euo pipefail
 
 if [ $# -lt 3 ]; then
@@ -32,4 +37,18 @@ if [ "$actual" != "$digest" ]; then
   exit 1
 fi
 
-echo "OK: ${ref} -> ${digest}"
+# Сырой индекс без пробелов/переводов строк: порядок ключей в platform{} не гарантирован
+# спецификацией, поэтому ищем не пару "architecture"+"os", а каждое поле отдельно.
+raw="$(docker buildx imagetools inspect "$ref" --raw | tr -d ' \n\r\t')"
+for arch in ${REQUIRE_ARCHES:-amd64}; do
+  if ! grep -q "\"architecture\":\"${arch}\"" <<<"$raw"; then
+    echo "::error::${ref}: в манифесте нет linux/${arch} (требуется: ${REQUIRE_ARCHES:-amd64})" >&2
+    exit 1
+  fi
+done
+if ! grep -q '"os":"linux"' <<<"$raw"; then
+  echo "::error::${ref}: в манифесте нет ни одной linux-платформы" >&2
+  exit 1
+fi
+
+echo "OK: ${ref} -> ${digest} (платформы: ${REQUIRE_ARCHES:-amd64})"

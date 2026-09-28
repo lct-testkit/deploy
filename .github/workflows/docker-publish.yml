@@ -4,6 +4,12 @@ name: docker-publish
 #   сборка в локальный docker → Trivy → push в GHCR → SBOM + provenance →
 #   подпись cosign (keyless, по digest) → repository_dispatch в deploy.
 #
+# Архитектуры: образ публикуется как multi-arch (linux/amd64 + linux/arm64).
+# Раннер — aarch64 (self-hosted), а прод и офлайн-бандл ставятся на x86_64: без явных
+# платформ сборка на таком раннере давала бы arm64-only образ, который не запускается на
+# x86. amd64 строится через QEMU (binfmt), arm64 — нативно; обе платформы сканируются
+# Trivy ДО публикации, а после push манифест проверяется на наличие обеих.
+#
 # Ключевое отличие от прежних build.yml: образ попадает в GHCR ТОЛЬКО после
 # успешного скана. Вызывающий workflow обязан сам гарантировать, что CI
 # (lint/tests) зелёный — через `needs:` в том же файле.
@@ -69,7 +75,9 @@ jobs:
     # ubuntu-latest било в биллинг-стену GitHub Actions (см. lint/test/security
     # во всех трёх репозиториях — тот же перевод, та же причина).
     runs-on: [self-hosted, lct]
-    timeout-minutes: 40
+    # amd64 под QEMU на 2 vCPU: pip-установка бэкенда ~6 мин вместо ~1 (замер на раннере),
+    # плюс arm64, два скана и push из кэша — 40 минут были бы впритык.
+    timeout-minutes: 75
     permissions:
       contents: read
       packages: write
@@ -95,6 +103,26 @@ jobs:
         run: |
           echo "tag=sha-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
 
+      # Кросс-сборка требует binfmt-обработчика QEMU для чужой архитектуры. Если он уже включён
+      # (на общем раннере его держит пакет qemu-user-static) — ничего не трогаем; иначе ставим
+      # (на GitHub-hosted раннерах его нет). tonistiigi/binfmt закреплён по digest, как и всё здесь.
+      - name: QEMU (binfmt) для сборки чужой архитектуры
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            aarch64) foreign=x86_64;  short=amd64 ;;
+            x86_64)  foreign=aarch64; short=arm64 ;;
+            *) echo "::error::неизвестная архитектура раннера: $(uname -m)"; exit 1 ;;
+          esac
+          if [ "$(head -n1 "/proc/sys/fs/binfmt_misc/qemu-${foreign}" 2>/dev/null || true)" = "enabled" ]; then
+            echo "binfmt qemu-${foreign} уже включён"
+          else
+            echo "binfmt qemu-${foreign} не включён — ставлю"
+            docker run --privileged --rm \
+              tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 \
+              --install "${short}"
+          fi
+
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -103,37 +131,62 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1. Локальная сборка (в реестр ничего не уходит). Аттестации нельзя
-      #    загрузить в локальный docker, поэтому provenance/sbom — на шаге push.
-      - name: Build (локально, для скана)
+      # 1. Локальная сборка КАЖДОЙ платформы в tar (в реестр ничего не уходит; tar, а не `load`,
+      #    чтобы скан не зависел от того, как docker-демон хранит образ чужой архитектуры).
+      #    Аттестации в tar/локальный docker не кладутся, поэтому provenance/sbom — на шаге push.
+      - name: Build linux/amd64 (в tar, для скана)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.context }}/${{ inputs.dockerfile }}
-          load: true
+          platforms: linux/amd64
+          outputs: type=docker,dest=${{ runner.temp }}/scan-amd64.tar
           push: false
           provenance: false
-          tags: scan/${{ inputs.image }}:candidate
+          tags: scan/${{ inputs.image }}:candidate-amd64
           cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
           secret-envs: ${{ secrets.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
 
       # 2. Скан ДО публикации: упавший скан = образа в GHCR нет.
-      - name: Trivy (CRITICAL/HIGH)
+      - name: Trivy linux/amd64 (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
-          image-ref: scan/${{ inputs.image }}:candidate
+          input: ${{ runner.temp }}/scan-amd64.tar
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
           trivyignores: ${{ inputs.trivyignore }}
 
-      # 3. Публикация: слои берутся из кэша builder'а этого же job'а.
-      - name: Push (SBOM + provenance)
+      - name: Build linux/arm64 (в tar, для скана)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          platforms: linux/arm64
+          outputs: type=docker,dest=${{ runner.temp }}/scan-arm64.tar
+          push: false
+          provenance: false
+          tags: scan/${{ inputs.image }}:candidate-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
+          secret-envs: ${{ secrets.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
+
+      - name: Trivy linux/arm64 (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          input: ${{ runner.temp }}/scan-arm64.tar
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: ${{ inputs.trivyignore }}
+
+      # 3. Публикация multi-arch индексом: слои обеих платформ берутся из кэша builder'а этого же job'а.
+      - name: Push (multi-arch, SBOM + provenance)
         id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ inputs.context }}
           file: ${{ inputs.context }}/${{ inputs.dockerfile }}
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: mode=max
           sbom: true
@@ -141,6 +194,22 @@ jobs:
           cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache,mode=max
           secret-envs: ${{ secrets.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
+
+      # Проверяем то, что реально лежит в GHCR, а не то, что собирались опубликовать: без обеих
+      # платформ образ либо не запустится на x86-проде, либо не пройдёт smoke в notify на aarch64.
+      - name: Проверить платформы опубликованного образа
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -euo pipefail
+          raw="$(docker buildx imagetools inspect "${IMAGE_REPO}@${DIGEST}" --raw | tr -d ' \n\r\t')"
+          for arch in amd64 arm64; do
+            grep -q "\"architecture\":\"${arch}\"" <<<"${raw}" || {
+              echo "::error::в ${IMAGE_REPO}@${DIGEST} нет linux/${arch}"
+              exit 1
+            }
+          done
+          echo "платформы в индексе: linux/amd64, linux/arm64"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
@@ -196,5 +265,6 @@ jobs:
             echo "### Опубликован образ \`${IMAGE_REPO}\`"
             echo "- тег: \`${TAG}\`"
             echo "- digest: \`${DIGEST}\`"
-            echo "- Trivy: пройден до публикации; SBOM + provenance приложены; подпись cosign выставлена"
+            echo "- платформы: linux/amd64, linux/arm64"
+            echo "- Trivy: обе платформы пройдены до публикации; SBOM + provenance приложены; подпись cosign выставлена"
           } >> "$GITHUB_STEP_SUMMARY"
