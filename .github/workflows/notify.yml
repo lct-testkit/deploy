@@ -28,8 +28,15 @@ permissions:
 jobs:
   update-manifest:
     name: обновить images.yaml
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Self-hosted, а не ubuntu-latest: у организации отключён биллинг GitHub Actions (тот же перевод,
+    # что у lint/test/security/publish). Раннер — aarch64, поэтому стек ниже поднимается на нативных
+    # arm64-вариантах образов: docker-publish.yml публикует api/web как multi-arch (amd64 + arm64).
+    # Безопасно для общей машины: e2e_stack.sh живёт в изолированном compose-проекте rtk-e2e на портах
+    # 28xxx и ничего не делает с хостом (в отличие от e2e.yml — там iptables и docker system prune,
+    # поэтому тот workflow на раннер НЕ переносили).
+    runs-on: [self-hosted, lct]
+    # 2 vCPU на 9 раннеров: pull ~2 ГБ образов + старт Keycloak + smoke укладываются в 40 мин впритык.
+    timeout-minutes: 60
     env:
       IMAGE: ${{ github.event.client_payload.image }}
       TAG: ${{ github.event.client_payload.tag }}
@@ -58,7 +65,13 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GHCR_PULL_TOKEN }}
 
-      - name: Образ существует и digest совпадает с тегом
+      # Дополнительно к «существует и digest совпадает»: образ обязан содержать linux/amd64 (прод и
+      # офлайн-бандл — x86) и linux/arm64 (этот стек ниже поднимается на aarch64-раннере). Образ,
+      # собранный на раннере без явных платформ, был бы arm64-only: он бы прошёл smoke здесь, попал бы
+      # в images.yaml и не запустился на x86 — поэтому такой образ отклоняем до записи в main.
+      - name: Образ существует, digest совпадает с тегом, платформы на месте
+        env:
+          REQUIRE_ARCHES: "amd64 arm64"
         run: bash scripts/verify_image.sh "$IMAGE" "$TAG" "$DIGEST"
 
       # Промоушен-гейт: новый образ попадёт в main (и значит на стенды) только если
