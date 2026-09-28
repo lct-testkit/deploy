@@ -77,17 +77,23 @@ log "версия ${VERSION}, каталог сборки ${STAGE}"
 render --list --registry "localhost:5000" | tr -d '\r' > "${STAGE}/images.tsv"
 [[ -s "${STAGE}/images.tsv" ]] || { echo "images.yaml: нет образов с tag/digest" >&2; exit 1; }
 
+# BUNDLE_PLATFORM (например linux/amd64) — платформа образов бандла, когда она не совпадает с платформой демона
+# сборщика: aarch64-раннер собирает поставку для x86_64. Тогда pull и save берут только этот вариант образа
+# (`docker save --platform` — Docker 28+ с containerd-хранилищем). Без переменной — как раньше.
+PLATFORM_ARGS=()
+[[ -n "${BUNDLE_PLATFORM:-}" ]] && PLATFORM_ARGS=(--platform "${BUNDLE_PLATFORM}")
+
 BUNDLE_REFS=()
 while IFS=$'\t' read -r name source bundle_ref _reg; do
   log "docker pull ${source}"
-  docker pull --quiet "${source}" >/dev/null
+  docker pull --quiet ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${source}" >/dev/null
   docker tag "${source}" "${bundle_ref}"
   BUNDLE_REFS+=("${bundle_ref}")
   echo "  ${name}: ${bundle_ref}"
 done < "${STAGE}/images.tsv"
 
 log "docker save (${#BUNDLE_REFS[@]} образов) → images.tar.gz"
-docker save "${BUNDLE_REFS[@]}" | gzip -6 > "${STAGE}/images.tar.gz"
+docker save ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${BUNDLE_REFS[@]}" | gzip -6 > "${STAGE}/images.tar.gz"
 
 # --- 2. Готовый .env.images для офлайн-режима -----------------------------------
 render --mode bundle > "${STAGE}/env/images.bundle.env"
