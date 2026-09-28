@@ -522,6 +522,9 @@ services:
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: ${GRAFANA_ANONYMOUS_VIEWER:-false}
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Домашняя страница Grafana — дашборд «API — здоровье и производительность» (провижининг из
+      # ./grafana/dashboards), а не пустая «Welcome»: гость и админ сразу видят метрики.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/api-overview.json
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
