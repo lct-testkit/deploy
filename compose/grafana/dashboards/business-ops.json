@@ -42,7 +42,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "up{job=~\"api|keycloak|prometheus\"}",
-          "legendFormat": "{{job}}",
+          "legendFormat": "{{job}} {{instance}}",
           "instant": true
         }
       ]
@@ -73,7 +73,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "crm_dependency_up",
+          "expr": "min by (dependency) (crm_dependency_up)",
           "legendFormat": "{{dependency}}",
           "instant": true
         }
@@ -99,7 +99,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum(crm_sla_breaching_deals)",
+          "expr": "max(crm_sla_breaching_deals)",
           "legendFormat": "сделок с нарушенным SLA",
           "instant": true
         },
@@ -113,7 +113,7 @@
         {
           "refId": "C",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "crm_reports_in_progress",
+          "expr": "sum(crm_reports_in_progress)",
           "legendFormat": "отчётов в работе",
           "instant": true
         }
@@ -139,7 +139,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "crm_dependency_up",
+          "expr": "min by (dependency) (crm_dependency_up)",
           "legendFormat": "{{dependency}}"
         }
       ]
@@ -160,7 +160,7 @@
         {
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "crm_queue_depth",
+          "expr": "max by (queue) (crm_queue_depth)",
           "legendFormat": "{{queue}}"
         }
       ]

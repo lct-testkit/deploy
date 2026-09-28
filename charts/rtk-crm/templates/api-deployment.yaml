@@ -26,6 +26,9 @@ metadata:
     {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
 spec:
   clusterIP: None
+  # Неготовые реплики остаются в DNS, как и в compose (Docker DNS не смотрит на health): Prometheus видит up=0
+  # у реплики, у которой /health/ready отвечает 503, а не теряет её из целей молча.
+  publishNotReadyAddresses: true
   selector:
     {{- include "rtk-crm.selectorLabels" (dict "ctx" $ "name" "api") | nindent 4 }}
   ports:

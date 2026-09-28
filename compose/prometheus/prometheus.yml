@@ -12,10 +12,13 @@ scrape_configs:
       - targets: ["localhost:9090"]
 
   # backend/app/core/metrics.py: RED-метрики (crm_http_requests_total, crm_http_request_duration_seconds —
-  # гистограмма с бакетами под бюджет p95 <= 300 мс, crm_http_errors_total), crm_queue_depth,
-  # crm_background_tasks_total, crm_reports_in_progress, crm_audit_records_total, crm_dependency_up.
-  # Отдаётся на /metrics без префикса и без авторизации (backend/app/api/health.py) — доступно только
-  # внутри сети crm, Caddy отдаёт на него 404 снаружи (см. Caddyfile).
+  # гистограмма с бакетами под бюджет p95 <= 300 мс, crm_http_errors_total), crm_audit_records_total (записи,
+  # сделанные в процессе api), crm_dependency_up и crm_queue_depth (обновляются при обращении к
+  # /health/ready). Отдаётся на /metrics без префикса и без авторизации (backend/app/api/health.py) —
+  # доступно только внутри сети crm, Caddy отдаёт на него 404 снаружи (см. Caddyfile).
+  # Метрики фоновых задач (crm_background_tasks_total, SLA, отчёты) живут в процессе воркера arq, у
+  # которого своего /metrics пока нет, поэтому сюда не попадают: соответствующие панели дашборда
+  # business-ops пусты, пока backend не начнёт их отдавать (см. описания панелей).
   #
   # Таргет — КАЖДАЯ реплика api, а не общее имя сервиса. Счётчики и гистограммы prometheus_client живут
   # в памяти процесса, а у api один uvicorn-воркер на контейнер, масштабирование — репликами
