@@ -65,11 +65,17 @@ spec:
               valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: grafana-admin-password } }
             # Grafana сидит на публичном пути /grafana без отдельного IP-ограничения (в отличие от
             # консоли администратора Keycloak) — барьер снаружи только её собственный вход, поэтому
-            # signup/анонимный доступ выключаем явно.
+            # signup/анонимный доступ выключаем явно; гость без пароля (роль Viewer, только чтение) —
+            # opt-in через env.grafanaAnonymousViewer, как GRAFANA_ANONYMOUS_VIEWER в compose.
             - name: GF_USERS_ALLOW_SIGN_UP
               value: "false"
             - name: GF_AUTH_ANONYMOUS_ENABLED
-              value: "false"
+              value: {{ .Values.env.grafanaAnonymousViewer | default false | quote }}
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Viewer
+            # Домашняя страница — дашборд API (тот же файл, что монтируется ниже), как в compose.
+            - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
+              value: /etc/grafana/dashboards/api-overview.json
           ports:
             - name: http
               containerPort: 3000
