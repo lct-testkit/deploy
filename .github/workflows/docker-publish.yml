@@ -66,7 +66,9 @@ permissions:
 jobs:
   publish:
     name: publish (${{ inputs.image }})
-    runs-on: ubuntu-latest
+    # ubuntu-latest било в биллинг-стену GitHub Actions (см. lint/test/security
+    # во всех трёх репозиториях — тот же перевод, та же причина).
+    runs-on: [self-hosted, lct]
     timeout-minutes: 40
     permissions:
       contents: read
