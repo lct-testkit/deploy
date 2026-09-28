@@ -3,8 +3,10 @@ name: e2e
 # Сквозная проверка того, что реально важно заказчику:
 #   stack           — стек из образов images.yaml поднимается с нуля, проходит smoke,
 #                     бэкап → восстановление в чистый стенд → smoke (спека §6);
+#                     идёт на self-hosted раннере (см. комментарий у job);
 #   offline-bundle  — собранный офлайн-бандл ставится на «чистой» машине БЕЗ доступа
-#                     к registry и интернету (критерий №5 паспорта проекта).
+#                     к registry и интернету (критерий №5 паспорта проекта);
+#                     остаётся на GitHub-hosted раннере (см. комментарий у job).
 #
 # Образы api/web в GHCR приватные — нужен секрет GHCR_PULL_TOKEN (classic PAT,
 # read:packages, см. docs/ghcr-setup.md). На PR из форков секретов нет — job
@@ -33,10 +35,25 @@ permissions:
 jobs:
   stack:
     name: стек · smoke · бэкап → восстановление
-    runs-on: ubuntu-latest
-    timeout-minutes: 40
+    # Self-hosted, а не ubuntu-latest: у организации отключён биллинг GitHub Actions (тот же перевод, что у
+    # validate/notify/publish). Раннер — aarch64: стек поднимается на нативных arm64-вариантах образов
+    # (docker-publish.yml публикует api/web как multi-arch); amd64-вариант, который реально едет на прод,
+    # здесь не исполняется — его проверяет установка бандла и smoke на самом стенде.
+    # Безопасно для общей машины: job трогает только свои compose-проекты с уникальным именем на сдвинутых
+    # портах (E2E_PROJECT/E2E_PORT_OFFSET ниже, тома удаляются вместе с проектом) и ничего не делает с хостом.
+    # iptables и docker system prune есть только в offline-bundle — поэтому тот job на раннер НЕ переносили.
+    runs-on: [self-hosted, lct]
+    # 2 vCPU на 9 раннеров: pull ~2 ГБ образов, Keycloak, smoke и второй стек для проверки восстановления.
+    timeout-minutes: 60
+    env:
+      # Прогоны (PR, ночной, вызов из release) могут идти на одной машине одновременно, а с ними и notify
+      # (проект rtk-e2e, порты 28xxx): у каждого прогона своё имя проекта и свой сдвиг портов.
+      E2E_PROJECT: rtk-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Сдвиг портов этого прогона (10…3990, не 0 — это порты notify)
+        run: echo "E2E_PORT_OFFSET=$(( ((GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT) % 399 + 1) * 10 ))" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -72,6 +89,11 @@ jobs:
   offline-bundle:
     name: офлайн-бандл ставится без сети
     # Тяжёлый (образы ~1–2 ГиБ): по расписанию, вручную и при изменении сборки бандла.
+    # На self-hosted НЕ переносим: job режет исходящий трафик root через iptables и делает
+    # `docker system prune -af --volumes` — на общем Docker-демоне это снесло бы чужие образы и тома, а
+    # раннеры остались бы без сети. К тому же бандл собирается под x86_64 (прод), а раннер aarch64:
+    # установка «на чистой машине» здесь исполняла бы образы под эмуляцией. Пока биллинг GitHub Actions
+    # не восстановлен, этот job красный «не запущен», а не «провален» (завершается за пару секунд).
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 60

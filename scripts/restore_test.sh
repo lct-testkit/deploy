@@ -8,12 +8,15 @@
 #
 # Стенд поднимается отдельным compose-проектом rtk-restore-test на других портах
 # (18080/18443/18333/15433) и удаляется вместе с томами (--keep оставляет его).
+# Для параллельных прогонов на одной машине имя проекта и сдвиг портов задаются переменными
+# окружения RESTORE_TEST_PROJECT и RESTORE_TEST_PORT_OFFSET (их выставляет e2e_stack.sh).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/../compose/docker-compose.yml"
 BACKUP=""; ENV_FILE=""; IMAGES_ENV=""; KEEP=0
-PROJECT="rtk-restore-test"
+PROJECT="${RESTORE_TEST_PROJECT:-rtk-restore-test}"
+PORT_OFFSET="${RESTORE_TEST_PORT_OFFSET:-0}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -34,7 +37,9 @@ PG_DB="$(env_val POSTGRES_DB)"; PG_DB="${PG_DB:-crm}"
 
 # Изоляция от боевого стенда: порты и проект. Переменные окружения процесса
 # имеют приоритет над --env-file.
-export HTTP_PORT=18080 HTTPS_PORT=18443 S3_PROXY_PORT=18333 POSTGRES_PORT=15433 REGISTRY_PORT=15000
+[[ "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || { echo "RESTORE_TEST_PORT_OFFSET должен быть числом, а не '${PORT_OFFSET}'" >&2; exit 2; }
+export HTTP_PORT=$((18080 + PORT_OFFSET)) HTTPS_PORT=$((18443 + PORT_OFFSET)) S3_PROXY_PORT=$((18333 + PORT_OFFSET))
+export POSTGRES_PORT=$((15433 + PORT_OFFSET)) REGISTRY_PORT=$((15000 + PORT_OFFSET))
 dc() { docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" --env-file "${IMAGES_ENV}" "$@"; }
 cleanup() { if [[ "${KEEP}" != 1 ]]; then dc down -v --remove-orphans >/dev/null 2>&1 || true; fi; }
 trap cleanup EXIT

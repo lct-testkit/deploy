@@ -8,6 +8,10 @@
 # `docker login ghcr.io` — api/web в GHCR приватные. Секреты каждый раз новые
 # (gen_env.sh), изолированный compose-проект rtk-e2e, порты 28080/28443/28333/25433.
 #
+# Несколько прогонов на одной машине (self-hosted раннеры делят один Docker-демон) не пересекаются,
+# если задать разные E2E_PROJECT и E2E_PORT_OFFSET: имя проекта берётся из первой переменной, все
+# порты сдвигаются на вторую. Проверка восстановления получает тот же сдвиг (см. restore_test.sh).
+#
 # При падении печатает хвосты логов сервисов — по ним видно причину без
 # повторного прогона.
 set -euo pipefail
@@ -15,7 +19,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_DIR}/compose/docker-compose.yml"
-PROJECT="rtk-e2e"
+PROJECT="${E2E_PROJECT:-rtk-e2e}"
+PORT_OFFSET="${E2E_PORT_OFFSET:-0}"
+[[ "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || { echo "E2E_PORT_OFFSET должен быть числом, а не '${PORT_OFFSET}'" >&2; exit 2; }
 IMAGES_ENV_SRC=""
 WITH_RESTORE=0
 KEEP=0
@@ -34,7 +40,8 @@ command -v python3 >/dev/null 2>&1 || PY="python"
 
 # `pwd -W` — путь в виде C:/… для нативного docker.exe при запуске из Git Bash на Windows; на Linux не нужен.
 WORK="$(cd "$(mktemp -d)" && { pwd -W 2>/dev/null || pwd; })"
-export HTTP_PORT=28080 HTTPS_PORT=28443 S3_PROXY_PORT=28333 POSTGRES_PORT=25433 REGISTRY_PORT=25000
+export HTTP_PORT=$((28080 + PORT_OFFSET)) HTTPS_PORT=$((28443 + PORT_OFFSET)) S3_PROXY_PORT=$((28333 + PORT_OFFSET))
+export POSTGRES_PORT=$((25433 + PORT_OFFSET)) REGISTRY_PORT=$((25000 + PORT_OFFSET))
 
 dc() { docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --env-file "${WORK}/.env" --env-file "${WORK}/.env.images" "$@"; }
 
