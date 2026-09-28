@@ -37,7 +37,7 @@ PG_DB="$(env_val POSTGRES_DB)"; PG_DB="${PG_DB:-crm}"
 
 # Изоляция от боевого стенда: порты и проект. Переменные окружения процесса
 # имеют приоритет над --env-file.
-[[ "${PORT_OFFSET}" =~ ^[0-9]+$ ]] || { echo "RESTORE_TEST_PORT_OFFSET должен быть числом, а не '${PORT_OFFSET}'" >&2; exit 2; }
+[[ "${PORT_OFFSET}" =~ ^(0|[1-9][0-9]{0,3})$ ]] || { echo "RESTORE_TEST_PORT_OFFSET: число 0…9999, а не '${PORT_OFFSET}'" >&2; exit 2; }
 export HTTP_PORT=$((18080 + PORT_OFFSET)) HTTPS_PORT=$((18443 + PORT_OFFSET)) S3_PROXY_PORT=$((18333 + PORT_OFFSET))
 export POSTGRES_PORT=$((15433 + PORT_OFFSET)) REGISTRY_PORT=$((15000 + PORT_OFFSET))
 dc() { docker compose -p "${PROJECT}" -f "${COMPOSE_FILE}" --env-file "${ENV_FILE}" --env-file "${IMAGES_ENV}" "$@"; }

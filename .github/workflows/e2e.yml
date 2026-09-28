@@ -39,21 +39,22 @@ jobs:
     # validate/notify/publish). Раннер — aarch64: стек поднимается на нативных arm64-вариантах образов
     # (docker-publish.yml публикует api/web как multi-arch); amd64-вариант, который реально едет на прод,
     # здесь не исполняется — его проверяет установка бандла и smoke на самом стенде.
-    # Безопасно для общей машины: job трогает только свои compose-проекты с уникальным именем на сдвинутых
-    # портах (E2E_PROJECT/E2E_PORT_OFFSET ниже, тома удаляются вместе с проектом) и ничего не делает с хостом.
+    # Безопасно для общей машины: job трогает только свои compose-проекты с уникальным именем на свободных
+    # портах (E2E_PROJECT/E2E_PORT_OFFSET ниже; тома удаляются вместе с проектом, а последний шаг сносит
+    # проекты по меткам, даже если скрипт убили) и ничего не делает с хостом.
     # iptables и docker system prune есть только в offline-bundle — поэтому тот job на раннер НЕ переносили.
     runs-on: [self-hosted, lct]
     # 2 vCPU на 9 раннеров: pull ~2 ГБ образов, Keycloak, smoke и второй стек для проверки восстановления.
     timeout-minutes: 60
     env:
       # Прогоны (PR, ночной, вызов из release) могут идти на одной машине одновременно, а с ними и notify
-      # (проект rtk-e2e, порты 28xxx): у каждого прогона своё имя проекта и свой сдвиг портов.
+      # (проект rtk-e2e, порты 28xxx): у каждого прогона своё имя проекта, а сдвиг портов скрипт выбирает сам
+      # (auto): первый, при котором свободны все порты стенда и стенда восстановления и который не задевает
+      # фиксированные порты notify.
       E2E_PROJECT: rtk-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      E2E_PORT_OFFSET: auto
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Сдвиг портов этого прогона (10…3990, не 0 — это порты notify)
-        run: echo "E2E_PORT_OFFSET=$(( ((GITHUB_RUN_ID + GITHUB_RUN_ATTEMPT) % 399 + 1) * 10 ))" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -85,6 +86,17 @@ jobs:
       - name: Стенд из images.yaml (up → smoke → бэкап → восстановление → smoke)
         if: steps.token.outputs.have == 'true'
         run: bash scripts/e2e_stack.sh --with-restore
+
+      # Страховка на случай, когда скрипт не успел прибраться за собой (таймаут, SIGKILL раннера): снести оба проекта
+      # прогона по меткам compose. Общий Docker-демон иначе копил бы чужие тома и контейнеры.
+      - name: Убрать стенды этого прогона
+        if: always()
+        run: |
+          for p in "${E2E_PROJECT}" "${E2E_PROJECT}-restore"; do
+            docker ps -aq --filter "label=com.docker.compose.project=${p}" | xargs -r docker rm -f || true
+            docker volume ls -q --filter "label=com.docker.compose.project=${p}" | xargs -r docker volume rm || true
+            docker network ls -q --filter "label=com.docker.compose.project=${p}" | xargs -r docker network rm || true
+          done
 
   offline-bundle:
     name: офлайн-бандл ставится без сети
