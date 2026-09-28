@@ -149,7 +149,7 @@ jobs:
 
       # 2. Скан ДО публикации: упавший скан = образа в GHCR нет.
       - name: Trivy linux/amd64 (CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           input: ${{ runner.temp }}/scan-amd64.tar
           severity: CRITICAL,HIGH
@@ -171,7 +171,7 @@ jobs:
           secret-envs: ${{ secrets.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
 
       - name: Trivy linux/arm64 (CRITICAL/HIGH)
-        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           input: ${{ runner.temp }}/scan-arm64.tar
           severity: CRITICAL,HIGH
