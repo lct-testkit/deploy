@@ -12,26 +12,31 @@ scrape_configs:
       - targets: ["localhost:9090"]
 
   # backend/app/core/metrics.py: RED-метрики (crm_http_requests_total, crm_http_request_duration_seconds —
-  # гистограмма с бакетами под бюджет p95 <= 300 мс, crm_http_errors_total), crm_queue_depth,
-  # crm_background_tasks_total, crm_reports_in_progress, crm_audit_records_total, crm_dependency_up.
-  # Отдаётся на /metrics без префикса и без авторизации (backend/app/api/health.py) — доступно только
-  # внутри сети crm, Caddy отдаёт на него 404 снаружи (см. Caddyfile).
+  # гистограмма с бакетами под бюджет p95 <= 300 мс, crm_http_errors_total), crm_audit_records_total (записи,
+  # сделанные в процессе api), crm_dependency_up и crm_queue_depth (обновляются при обращении к
+  # /health/ready). Отдаётся на /metrics без префикса и без авторизации (backend/app/api/health.py) —
+  # доступно только внутри сети crm, Caddy отдаёт на него 404 снаружи (см. Caddyfile).
+  # Метрики фоновых задач (crm_background_tasks_total, SLA, отчёты) живут в процессе воркера arq, у
+  # которого своего /metrics пока нет, поэтому сюда не попадают: соответствующие панели дашборда
+  # business-ops пусты, пока backend не начнёт их отдавать (см. описания панелей).
   #
-  # Таргет — ОДНО имя "api", не список реплик. У api один uvicorn-воркер на контейнер, масштабирование —
-  # репликами (`docker compose up -d --scale api=3`, см. backend/deploy/entrypoint.sh). В compose имя
-  # "api" резолвится встроенной DNS во ВСЕ IP реплик по кругу (round-robin A-записей на каждый lookup);
-  # в Kubernetes то же имя — Service "api" с ClusterIP, который балансирует на все Pod'ы-реплики
-  # (kube-proxy/IPVS). В обоих случаях новое TCP-соединение на каждый scrape статистически попадает в
-  # разные реплики по очереди — таргет один, а не N. Ни dns_sd_configs, ни kubernetes_sd_configs
-  # (отдельный таргет на реплику + метка instance) сюда намеренно не заведены: для демо-масштаба этого
-  # стенда (несколько реплик, задача — общая картина RED/SLA по сервису, а не построчная разбивка по
-  # репликам) хватает единственного таргета со scrape_interval 15s — расхождение между репликами
-  # усредняется за пару интервалов. Если понадобится честная разбивка по репликам — заводить
-  # kubernetes_sd_configs (K8s) отдельно от compose (там аналога нет без cadvisor/докер-сокета).
+  # Таргет — КАЖДАЯ реплика api, а не общее имя сервиса. Счётчики и гистограммы prometheus_client живут
+  # в памяти процесса, а у api один uvicorn-воркер на контейнер, масштабирование — репликами
+  # (`docker compose up -d --scale api=3`, см. backend/deploy/entrypoint.sh): каждая реплика считает
+  # независимо. Один таргет "api:8000" (round-robin DNS в compose, ClusterIP в Kubernetes) отдавал бы
+  # каждому scrape случайную реплику, значения счётчика прыгали бы между разными процессами, а rate()
+  # принимает каждый «откат» за перезапуск счётчика и завышает результат.
+  # DNS-имя api-pods резолвится во ВСЕ IP реплик: в compose это сетевой алиас сервиса api
+  # (docker-compose.yml), в Kubernetes — headless Service api-pods (templates/api-deployment.yaml).
+  # Prometheus заводит отдельный ряд на каждый IP (метка instance), дашборды агрегируют
+  # sum(...) / sum by (le) (...) и поэтому не зависят от числа реплик.
   - job_name: api
     metrics_path: /metrics
-    static_configs:
-      - targets: ["api:8000"]
+    dns_sd_configs:
+      - names: ["api-pods"]
+        type: A
+        port: 8000
+        refresh_interval: 15s
 
   # KC_METRICS_ENABLED=true (см. docker-compose.yml/values.yaml) выставляет метрики на
   # management-порту 9000 — том же, что health (см. healthcheck сервиса keycloak): у него

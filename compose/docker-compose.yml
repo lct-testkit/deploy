@@ -302,7 +302,10 @@ services:
     security_opt:
       - no-new-privileges:true
     logging: *logging
-    networks: [crm]
+    networks:
+      crm:
+        # Prometheus скрейпит КАЖДУЮ реплику (dns_sd_configs по этому имени, см. prometheus/prometheus.yml).
+        aliases: [api-pods]
 
   worker:
     image: ${API_IMAGE:?выполните scripts/render_env_images.py}
@@ -469,8 +472,8 @@ services:
     logging: *logging
     networks: [crm]
 
-  # Собирает метрики api/keycloak (см. prometheus/prometheus.yml — там же разбор, почему таргет
-  # "api" один, а не список реплик). Профиль monitoring: docker compose --profile monitoring up -d
+  # Собирает метрики api/keycloak (см. prometheus/prometheus.yml — там же разбор, почему таргет api —
+  # каждая реплика через алиас api-pods, а не общее имя сервиса). Профиль monitoring: docker compose --profile monitoring up -d
   # (scripts/bundle_install.sh --monitoring) — опционален, не входит в core. Наружу (в т.ч. через
   # Caddy) не публикуется: у Prometheus нет своей аутентификации, доступ — только контейнер-контейнер
   # внутри сети crm (Grafana ходит туда как датасорс).
