@@ -13,6 +13,9 @@
 {
 	admin off
 	auto_https disable_redirects
+	# Клиент без SNI (bare IP) иначе получал TLS alert internal error — тот же фикс, что в
+	# compose/Caddyfile (комментарий там подробнее, caddyserver/caddy#6364).
+	default_sni {$CRM_TLS_HOST}
 	servers {
 		trusted_proxies static private_ranges
 	}
