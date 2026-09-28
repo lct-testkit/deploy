@@ -3,10 +3,10 @@
 #
 # Многостадийность здесь не косметика: вторая стадия не тащит npm/apk кэш,
 # оставшийся после глобальной установки в первой.
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS deps
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS deps
 RUN npm install -g @stoplight/prism-cli@5.16.0
 
-FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS runtime
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
 # Патчи alpine (openssl и т.п.) на дату сборки — база node:24-alpine не
 # всегда содержит последние security-фиксы своей же ветки.
 RUN apk update && apk upgrade --no-cache
