@@ -250,9 +250,18 @@ services:
         - "exec 3<>/dev/tcp/127.0.0.1/9000 &&
           printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
           grep -q '\"UP\"' <&3"
+      # retries: 60 — на первом старте (или после смены конфига/образа) Keycloak гоняет
+      # Quarkus-augmentation синхронно, ДО того как отдаёт хоть какой-то HTTP: замерено на
+      # реальной установке с 2 ГиБ RAM (всё остальное в стеке стартует одновременно и делит с
+      # ним память/CPU) — 234433 мс сама augmentation, плюс запуск runtime и импорт realm сверху.
+      # Старый бюджет 30s+20×15s=330s не хватало впритык: keycloak оставался «unhealthy» по
+      # таймауту, хотя реально просто медленно поднимался — api/caddy зависимые падали с
+      # "dependency failed to start", и это выглядело как сломанный установщик. 930s хватает с
+      # запасом и на такой стенд; на обычной машине ничего не меняет — healthy наступает рано,
+      # как и раньше.
       interval: 15s
-      timeout: 5s
-      retries: 20
+      timeout: 10s
+      retries: 60
       start_period: 30s
     depends_on:
       postgres:
