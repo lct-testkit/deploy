@@ -102,6 +102,8 @@ RTK_ENV=demo scripts/deploy.sh rollback    # вернуть образы пре�
 
 ## Офлайн-установка (закрытый контур)
 
+Скринкаст: развёртка офлайн/онлайн в Proxmox, от чистой машины до работающего стенда — [vkvideo.ru](https://vkvideo.ru/video-241860435_456239018?list=ln-TGrbm0XClyNeuXUdsy) (полный список — [`docs/SCREENCASTS.md`](https://github.com/lct-testkit/.github/blob/main/docs/SCREENCASTS.md) в README организации).
+
 Каждый тег `vX.Y.Z` публикует в GitHub Releases бандл со ВСЕМИ образами, compose, скриптами и `SHA256SUMS`. Релиз выходит только если e2e зелёный, включая **установку бандла на машине без сети** (`.github/workflows/e2e.yml`).
 
 На машине с доступом (или на любой, куда скачаете релиз):
