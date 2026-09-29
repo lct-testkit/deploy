@@ -41,9 +41,10 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `.github/workflows/notify.yml` | Приём dispatch: проверка образа → стек с новым образом → коммит в `images.yaml` |
 | `.github/workflows/validate.yml` | yamllint, actionlint, shellcheck, hadolint, compose/helm, drift |
 | `.github/workflows/e2e.yml` | Стенд из образов + бэкап/восстановление; офлайн-бандл без сети (ночью и на релизе) |
-| `.github/workflows/build.yml` | Сборка образов моков |
+| `.github/workflows/build.yml` | Сборка образов моков — единственный workflow репозитория, оставшийся на `ubuntu-latest` ([`docs/ci-self-hosted.md`](docs/ci-self-hosted.md)) |
 | `.github/workflows/release.yml` | На теге `vX.Y.Z`: e2e → бандл → подпись → GitHub Release |
 | `docs/ghcr-setup.md`, `docs/REPO-SETTINGS.md` | Ручные шаги (токены, GHCR) и настройки репозиториев организации |
+| `docs/ci-self-hosted.md` | Почему CI гоняется на self-hosted раннере `lct`, что где идёт, как выпустить релиз без GitHub-hosted |
 
 Realm Keycloak (`realm-crm.json`), `s3.json`, `init-keycloak-db.sh`, `Caddyfile` — копии из
 `backend/deploy/`; `check_drift.py --backend-dir` (job `drift`) падает, если копии разошлись.

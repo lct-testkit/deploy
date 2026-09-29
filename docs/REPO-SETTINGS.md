@@ -54,4 +54,3 @@
 
 1. Применить настройки: `bash scripts/apply_repo_settings.sh --apply`.
 2. Создать секреты из таблицы выше.
-3. Удалить устаревшую ветку бота: `git push origin --delete bot/update-images-35271171079` (в `deploy`).
