@@ -169,6 +169,24 @@ Realm Keycloak импортируется один раз, при создани
 
 **Доступ к консоли администратора Keycloak.** Caddy отдаёт `/auth/admin/*` и `/auth/realms/master/*` только из закрытых сетей (`private_ranges`: localhost, docker, VPN): с публичного адреса консоль отвечает 404, вход под `admin` снаружи невозможен. Открыть консоль на сервере — через ssh-туннель (`ssh -L 8080:localhost:8080 сервер`, затем `http://localhost:8080/auth/admin/`) или расширить список: `ADMIN_CONSOLE_ALLOW="10.0.0.0/8 203.0.113.7"` в `compose/.env` и `docker compose up -d caddy`. Обычный вход пользователей (`/auth/realms/crm/...`) закрытие не затрагивает.
 
+**Пароль администратора разошёлся с `.env` (правили `.env` после первого старта стенда).** `KEYCLOAK_ADMIN_PASSWORD` Keycloak читает только один раз — при самом первом старте, когда в master realm ещё нет ни одного пользователя (см. выше); дальше переменную он не перечитывает. Поэтому смена пароля в `.env` и `docker compose … up -d keycloak` ничего не меняют: рабочим остаётся старый пароль (тот, что был при первом старте), а новый из `.env` не подходит — проверено воспроизведением сценария на `quay.io/keycloak/keycloak:25.0.6` (старый пароль — 200, новый — 401 от `/auth/realms/master/protocol/openid-connect/token`). Команда `kc.sh bootstrap-admin user`, которой это чинят в Keycloak 26+, в закреплённой `images.yaml` версии `25.0` не существует (`kc.sh bootstrap-admin` — `Unknown option: 'bootstrap-admin'`, тоже проверено на этом образе). На 25.x единственный способ — удалить пользователя `admin` из БД `keycloak`, чтобы master realm снова стал пустым, и перезапустить контейнер: bootstrap отработает как при первом старте, уже с текущим значением `.env`. У `user_entity` нет `ON DELETE CASCADE` на дочерние таблицы, поэтому сперва удаляем строки, ссылающиеся на пользователя, потом самого пользователя:
+
+```bash
+docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env \
+  --env-file /srv/rtk-demo/.env.images exec -T postgres \
+  psql -U crm -d keycloak -v ON_ERROR_STOP=1 -c "
+    DELETE FROM credential           WHERE user_id = (SELECT ue.id FROM user_entity ue JOIN realm r ON r.id = ue.realm_id WHERE r.name = 'master' AND ue.username = 'admin');
+    DELETE FROM user_role_mapping    WHERE user_id = (SELECT ue.id FROM user_entity ue JOIN realm r ON r.id = ue.realm_id WHERE r.name = 'master' AND ue.username = 'admin');
+    DELETE FROM user_required_action WHERE user_id = (SELECT ue.id FROM user_entity ue JOIN realm r ON r.id = ue.realm_id WHERE r.name = 'master' AND ue.username = 'admin');
+    DELETE FROM user_attribute       WHERE user_id = (SELECT ue.id FROM user_entity ue JOIN realm r ON r.id = ue.realm_id WHERE r.name = 'master' AND ue.username = 'admin');
+    DELETE FROM user_entity WHERE realm_id = (SELECT id FROM realm WHERE name = 'master') AND username = 'admin';
+  "
+docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-demo/.env \
+  --env-file /srv/rtk-demo/.env.images restart keycloak
+```
+
+Проверка: `docker compose … logs keycloak | grep "Added user"` — строка есть только когда master realm был пуст перед стартом; вход в `/auth/admin/` под `admin` и новым паролем из `.env` должен пройти, старый пароль — уже нет. Если сохранённых прежним `admin`-ом настроек консоли (например, других пользователей master realm) не было — данные `crm`-realm эта операция не трогает вообще, она только про пользователя `admin` в `master`.
+
 ### Ключи аудита и почта
 
 `gen_env.sh` при первой установке создаёт два случайных ключа и записывает их в `.env`: `AUDIT_HMAC_KEY` (HMAC цепочки аудита, хэш v3; без него цепочку можно пересчитать целиком тому, у кого есть доступ к БД) и `SETTINGS_ENCRYPTION_KEY` (ключ Fernet, которым шифруются секретные системные настройки). Оба ключа нужно сохранить вместе с бэкапом БД: потеря `SETTINGS_ENCRYPTION_KEY` делает зашифрованные настройки нечитаемыми, а смена `AUDIT_HMAC_KEY` не даёт проверить записи, подписанные прежним ключом. Стенд, поставленный раньше, ключей не имеет (аудит остаётся на хэше v2): добавьте значения в `.env` вручную и перезапустите `api` и `worker`.
