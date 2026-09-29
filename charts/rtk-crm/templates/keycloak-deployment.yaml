@@ -96,6 +96,10 @@ spec:
           # поэтому тот же приём через /dev/tcp. KC_HEALTH_ENABLED поднимает
           # health на management-порту 9000, KC_HTTP_RELATIVE_PATH действует
           # и там: путь именно /auth/health/ready.
+          # failureThreshold: 60 — та же причина, что в compose/docker-compose.yml (см. комментарий
+          # там): Quarkus-augmentation на первом старте синхронна и на слабом узле (замерено — 2 ГиБ
+          # RAM, всё остальное поднимается одновременно) занимает несколько минут ДО первого ответа
+          # HTTP. Старый бюджет 30s+20×15s=330s не хватало впритык.
           livenessProbe:
             exec:
               command:
@@ -103,8 +107,8 @@ spec:
                 - -c
                 - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"
             periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 20
+            timeoutSeconds: 10
+            failureThreshold: 60
             initialDelaySeconds: 30
           readinessProbe:
             exec:
@@ -113,8 +117,8 @@ spec:
                 - -c
                 - "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /auth/health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 && grep -q '\"UP\"' <&3"
             periodSeconds: 15
-            timeoutSeconds: 5
-            failureThreshold: 20
+            timeoutSeconds: 10
+            failureThreshold: 60
             initialDelaySeconds: 30
           resources:
             {{- toYaml .Values.resources.keycloak | nindent 12 }}
