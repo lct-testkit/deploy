@@ -6,7 +6,7 @@
 
 `x-api-env` в `compose/docker-compose.yml` совпадает с бэкендом (42 имени, сверяет `check_drift.py --backend-dir`), `gen_env.sh` создаёт `AUDIT_HMAC_KEY` и `SETTINGS_ENCRYPTION_KEY`, почта описана в `RUNBOOK.md`. Helm-чарт получил те же переменные (`charts/rtk-crm/templates/_helpers.tpl` — `AUDIT_HMAC_KEY`/`SETTINGS_ENCRYPTION_KEY`/`SMTP_PASSWORD` через Secret, остальное через `values.yaml`; `helm lint` зелёный). Осталось:
 
-- [ ] На уже развёрнутых стендах (`lct`: развёрнут v0.3.2) добавить ключи в `.env` и пересоздать `api` и `worker` — сделано при установке v0.3.2, для более старых стендов актуально.
+- [x] На уже развёрнутых стендах добавить ключи в `.env` и пересоздать `api` и `worker` — снято: с v0.3.2 `lct` переустанавливался с нуля несколько раз (v0.4.0, v0.5.0/v0.5.1), каждый раз из бандла, где `gen_env.sh` уже создаёт эти ключи; стенда старше v0.3.2 не осталось.
 - [ ] `check_drift.py` сверяет список только с `compose/docker-compose.yml`, не с чартом; при добавлении новой переменной бэкенда легко забыть про чарт — стоит сверять и его.
 
 ## 2. Безопасность demo-режима и prod
@@ -50,4 +50,4 @@
 - [ ] RPO 15 минут недостижим без WAL-архивирования: суточный дамп даёт сутки.
 - [ ] Helm-путь экспериментальный: реальная установка в CI не гоняется, у workload'ов нет `securityContext` (кроме `ntp` — capabilities, и `prometheus`/`grafana` — `fsGroup` для PVC, см. RUNBOOK.md). Режимов TLS, шрифтов и сидов в чарте нет (Kubernetes использует свой ingress) — осознанное ограничение.
 - [ ] На сервере `lct` проверить шрифты в `compose/fonts/` (в репозитории их быть не может).
-- [ ] Репозиторий: удалить ветку бота `bot/update-images-35271171079`, применить ruleset к `.github` и включить `require_code_owner_review` (см. `REPO-SETTINGS.md`).
+- [ ] Репозиторий: применить ruleset к `.github` и включить `require_code_owner_review` (см. `REPO-SETTINGS.md`) — ветка бота `bot/update-images-35271171079` уже удалена.
