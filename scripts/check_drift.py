@@ -14,6 +14,10 @@
      в compose/ побайтно совпадают с копиями в charts/rtk-crm/files/ (Caddyfile
      в чарте отличается только upstream'ом api — сравнивается без него) и,
      если задан --backend-dir, с backend/deploy/.
+  5. Множество имён переменных x-api-env (compose/docker-compose.yml) совпадает
+     с define "rtk-crm.apiEnv" в charts/rtk-crm/templates/_helpers.tpl (без
+     POSTGRES_PASSWORD — она там только для сборки KC_DATABASE_URL) и, если
+     задан --backend-dir, с backend/docker-compose.yml.
 
     python scripts/check_drift.py [--backend-dir ../backend]
 """
@@ -163,16 +167,47 @@ def check_shared_configs(backend_dir: Path | None) -> None:
             err("compose/Caddyfile расходится с backend/deploy/Caddyfile")
 
 
+# POSTGRES_PASSWORD — единственная запись rtk-crm.apiEnv, которой нет в x-api-env: она там
+# только строительный блок для KC_DATABASE_URL внутри контейнера (см. комментарий у неё в
+# _helpers.tpl), а не настройка приложения. Разрешённое расхождение, не ошибка.
+CHART_ENV_ONLY_EXTRA = {"POSTGRES_PASSWORD"}
+
+
+def _helm_api_env_names() -> set[str]:
+    """Имена переменных из define "rtk-crm.apiEnv" (_helpers.tpl) — это Go-шаблон, не YAML,
+    поэтому парсим не yaml.safe_load, а регуляркой по строкам `- name: ИМЯ` внутри define/end."""
+    path = REPO_ROOT / "charts" / "rtk-crm" / "templates" / "_helpers.tpl"
+    text = path.read_text(encoding="utf-8")
+    m = re.search(r'\{\{-\s*define "rtk-crm\.apiEnv"\s*-\}\}(.*?)\{\{-\s*end\s*-\}\}', text, re.DOTALL)
+    if not m:
+        err('_helpers.tpl: не нашли define "rtk-crm.apiEnv" — проверка env-переменных чарта сломана')
+        return set()
+    return set(re.findall(r"^-\s*name:\s*([A-Z0-9_]+)\s*$", m.group(1), re.MULTILINE))
+
+
 def check_api_env(backend_dir: Path | None) -> None:
-    """Список x-api-env (переменные, которые долетают до api/worker) совпадает с backend: иначе новая настройка
-    бэкенда молча не действует на развёрнутом стенде (так были потеряны ключ аудита и SMTP)."""
+    """Список x-api-env (переменные, которые долетают до api/worker) совпадает с charts/rtk-crm
+    (_helpers.tpl, rtk-crm.apiEnv) и, если задан --backend-dir, с backend: иначе новая настройка
+    бэкенда молча не действует на развёрнутом стенде (так были потеряны ключ аудита и SMTP) —
+    для Helm-варианта это тот же риск, только всплывает не в compose, а в k8s-деплое."""
+    ours = set(load_yaml(REPO_ROOT / "compose" / "docker-compose.yml").get("x-api-env", {}))
+
+    chart = _helm_api_env_names()
+    missing_in_chart = ours - chart
+    if missing_in_chart:
+        err("charts/rtk-crm/templates/_helpers.tpl: в rtk-crm.apiEnv нет переменных из x-api-env: "
+            + ", ".join(sorted(missing_in_chart)))
+    extra_in_chart = chart - ours - CHART_ENV_ONLY_EXTRA
+    if extra_in_chart:
+        err("charts/rtk-crm/templates/_helpers.tpl: в rtk-crm.apiEnv есть переменные, которых нет в x-api-env: "
+            + ", ".join(sorted(extra_in_chart)))
+
     if backend_dir is None:
         return
     src_path = backend_dir / "docker-compose.yml"
     if not src_path.exists():
         return
     src = set(load_yaml(src_path).get("x-api-env", {}))
-    ours = set(load_yaml(REPO_ROOT / "compose" / "docker-compose.yml").get("x-api-env", {}))
     if src - ours:
         err("compose/docker-compose.yml: в x-api-env нет переменных бэкенда: " + ", ".join(sorted(src - ours)))
     if ours - src:
