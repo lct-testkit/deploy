@@ -45,6 +45,7 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `.github/workflows/release.yml` | На теге `vX.Y.Z`: e2e → бандл → подпись → GitHub Release |
 | `docs/ghcr-setup.md`, `docs/REPO-SETTINGS.md` | Ручные шаги (токены, GHCR) и настройки репозиториев организации |
 | `docs/ci-self-hosted.md` | Почему CI гоняется на self-hosted раннере `lct`, что где идёт, как выпустить релиз без GitHub-hosted |
+| `docs/ha-patroni.md` | HA на трёх узлах (Patroni + etcd + SeaweedFS): схема, развёртывание, скрипты failover, результаты проверок |
 
 Realm Keycloak (`realm-crm.json`), `s3.json`, `init-keycloak-db.sh`, `Caddyfile` — копии из
 `backend/deploy/`; `check_drift.py --backend-dir` (job `drift`) падает, если копии разошлись.
