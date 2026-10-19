@@ -250,9 +250,13 @@ services:
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-crm}
       KC_HTTP_ENABLED: "true"
       KC_HTTP_RELATIVE_PATH: /auth
-      KC_HOSTNAME_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/auth}
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      # Публичный адрес Keycloak (hostname v2, Keycloak 25): полный URL вместе с /auth. Он попадает в issuer токенов,
+      # в ссылки писем (сброс пароля, подтверждение почты) и в редиректы формы входа. Прежний KC_HOSTNAME_URL относится
+      # к hostname v1 и в Keycloak 25 молча не действует, из-за чего письма получали ссылку на внутренний keycloak:8080.
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/auth}
+      # Backchannel (token, JWKS, Admin API) динамический: api ходит по внутреннему http://keycloak:8080/auth,
+      # а issuer в токене остаётся публичным.
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
       KC_PROXY_HEADERS: xforwarded
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
@@ -260,6 +264,10 @@ services:
       # Источник — backend/deploy/keycloak/realm-crm.json, скопирован verbatim в ./keycloak/.
       # Демо-realm из репо или runtime/keycloak/, сгенерированный gen_env.sh.
       - ${KEYCLOAK_IMPORT_DIR:-./keycloak}:/opt/keycloak/data/import:ro
+      # Русская email-тема rtk-crm (письма «забыли пароль», подтверждение почты, executeActions). Источник —
+      # backend/deploy/keycloak/themes/rtk-crm, скопирован verbatim. Тему подключает realm (emailTheme); у уже
+      # установленного стенда realm не переимпортируется — см. scripts/kc_apply_email_theme.sh.
+      - ./keycloak/themes/rtk-crm:/opt/keycloak/themes/rtk-crm:ro
     healthcheck:
       test:
         - CMD

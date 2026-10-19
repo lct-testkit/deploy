@@ -10,7 +10,8 @@
      образом отображён на images.yaml.
   3. charts/rtk-crm/values.yaml: registry, имена собственных образов и digest'ы
      внешних образов совпадают с images.yaml.
-  4. Копии общих конфигов (Caddyfile, realm-crm.json, s3.json, init-keycloak-db.sh)
+  4. Копии общих конфигов (Caddyfile, realm-crm.json, s3.json, init-keycloak-db.sh и вся email-тема
+     keycloak/themes/rtk-crm/email/**)
      в compose/ побайтно совпадают с копиями в charts/rtk-crm/files/ (Caddyfile
      в чарте отличается только upstream'ом api — сравнивается без него) и,
      если задан --backend-dir, с backend/deploy/.
@@ -146,12 +147,27 @@ def check_shared_configs(backend_dir: Path | None) -> None:
         "grafana/dashboards/api-overview.json": "grafana/dashboards/api-overview.json",
         "grafana/dashboards/business-ops.json": "grafana/dashboards/business-ops.json",
     }
+    # Email-тема Keycloak rtk-crm: каталог, а не один файл, поэтому ключи собираем обходом. Файлы берём из
+    # всех трёх мест сразу: потерянный в одной копии файл иначе молча пропал бы из сверки.
+    theme_rel = Path("keycloak") / "themes" / "rtk-crm" / "email"
+    theme_roots = [compose / theme_rel, chart_files / "themes" / "rtk-crm" / "email"]
+    if backend_dir is not None:
+        theme_roots.append(backend_dir / "deploy" / theme_rel)
+    theme_files: set[str] = set()
+    for root in theme_roots:
+        if root.is_dir():
+            theme_files.update(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
+    for name in sorted(theme_files):
+        shared[f"keycloak/themes/rtk-crm/email/{name}"] = f"themes/rtk-crm/email/{name}"
+
     for rel, chart_name in shared.items():
         base = _read(compose / rel)
         if base is None:
             err(f"нет compose/{rel}")
             continue
         chart = _read(chart_files / chart_name)
+        if chart is None and rel.startswith("keycloak/themes/"):
+            err(f"нет charts/rtk-crm/files/{chart_name} (файл темы есть в compose/{rel})")
         if chart is not None and chart != base:
             err(f"charts/rtk-crm/files/{chart_name} расходится с compose/{rel}")
         if backend_dir is not None:
