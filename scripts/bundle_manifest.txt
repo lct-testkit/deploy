@@ -1,0 +1,44 @@
+# Что входит в офлайн-бандл. Единый список для scripts/build_offline_bundle.sh (копирует и падает, если файла нет)
+# и scripts/check_bundle_refs.sh (проверяет, что всё, на что ссылается RUNBOOK.md бандла, лежит в бандле).
+# Пути от корня репозитория; каталог копируется целиком; в бандле путь тот же (install.sh — отдельно, из scripts/bundle_install.sh).
+#   путь     — входит в бандл
+#   !путь    — RUNBOOK ссылается, но в бандл НЕ входит намеренно (онлайн-путь через git, CI, Kubernetes)
+#   ~путь    — создаётся установщиком на месте (в репозитории его нет)
+compose/docker-compose.yml
+compose/.env.example
+compose/Caddyfile
+compose/keycloak
+compose/seaweedfs
+compose/postgres
+compose/prometheus
+compose/grafana
+compose/ha
+compose/fonts/.gitkeep
+scripts/gen_env.sh
+scripts/lib_host.sh
+scripts/set_host.sh
+scripts/registry_load.sh
+scripts/smoke.sh
+scripts/seed_demo.sh
+scripts/kc_apply_email_theme.sh
+scripts/backup.sh
+scripts/restore_test.sh
+scripts/render_env_images.py
+scripts/requirements.txt
+seed
+images.yaml
+docs/site.md
+docs/ha-patroni.md
+~compose/.env
+~compose/.env.images
+~compose/fonts
+!charts/rtk-crm
+!scripts/build_offline_bundle.sh
+!scripts/deploy.sh
+!scripts/install_autodeploy.sh
+!scripts/provision_vm.sh
+!scripts/sync_seed.sh
+!docs/ghcr-setup.md
+!docs/ci-self-hosted.md
+!scripts/bundle_manifest.txt
+!scripts/check_bundle_refs.sh

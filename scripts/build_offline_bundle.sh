@@ -11,7 +11,9 @@
 #   env/images.bundle.env  готовый .env.images (образы из docker load)
 #   compose/             docker-compose.yml, .env.example, Caddyfile, конфиги
 #   compose/fonts/       шрифты Rostelecom Basis (*.woff), если сборка запущена с --fonts; иначе пусто
-#   scripts/             gen_env.sh, lib_host.sh, set_host.sh, registry_load.sh, smoke.sh, seed_demo.sh
+#   scripts/             gen_env.sh, lib_host.sh, set_host.sh, registry_load.sh, smoke.sh, seed_demo.sh, backup.sh,
+#                        restore_test.sh, kc_apply_email_theme.sh, render_env_images.py (полный список — scripts/bundle_manifest.txt)
+#   docs/, images.yaml   docs/site.md, docs/ha-patroni.md и манифест образов (нужен render_env_images.py для режима registry)
 #   seed/                скрипты моковых данных демо-стенда (запускает seed_demo.sh в контейнере node)
 #   install.sh           установщик (проверка SHA256SUMS → docker load → up)
 #   SHA256SUMS           контрольные суммы всех файлов бандла
@@ -98,25 +100,17 @@ docker save ${PLATFORM_ARGS[@]+"${PLATFORM_ARGS[@]}"} "${BUNDLE_REFS[@]}" | gzip
 # --- 2. Готовый .env.images для офлайн-режима -----------------------------------
 render --mode bundle > "${STAGE}/env/images.bundle.env"
 
-# --- 3. compose и скрипты: отсутствие любого файла — ошибка --------------------
-for f in compose/docker-compose.yml compose/.env.example compose/Caddyfile \
-         compose/keycloak/realm-crm.json compose/keycloak/themes/rtk-crm/email/theme.properties \
-         compose/keycloak/themes/rtk-crm/email/html/template.ftl compose/keycloak/themes/rtk-crm/email/html/password-reset.ftl \
-         compose/keycloak/themes/rtk-crm/email/messages/messages_ru.properties \
-         compose/keycloak/themes/rtk-crm/email/resources/img/logo.png compose/seaweedfs/s3.json compose/postgres/init-keycloak-db.sh \
-         compose/prometheus/prometheus.yml compose/grafana/provisioning/datasources/datasource.yml \
-         compose/grafana/provisioning/dashboards/dashboards.yml compose/grafana/dashboards/api-overview.json \
-         compose/grafana/dashboards/business-ops.json \
-         scripts/gen_env.sh scripts/lib_host.sh scripts/set_host.sh scripts/registry_load.sh scripts/smoke.sh \
-         scripts/bundle_install.sh scripts/seed_demo.sh scripts/kc_apply_email_theme.sh compose/fonts/.gitkeep \
-         seed/run.sh seed/lib.mjs seed/seed-demo.mjs seed/catalogs.mjs seed/erasure.mjs; do
+# --- 3. compose и скрипты: список файлов — scripts/bundle_manifest.txt, отсутствие любого — ошибка ----------------
+for f in scripts/bundle_install.sh RUNBOOK.md; do
   [[ -f "${f}" ]] || { echo "нет файла ${f} — бандл был бы неполным" >&2; exit 1; }
 done
-cp compose/docker-compose.yml compose/.env.example compose/Caddyfile "${STAGE}/compose/"
-cp -r compose/keycloak compose/seaweedfs compose/postgres compose/prometheus compose/grafana "${STAGE}/compose/"
-cp scripts/gen_env.sh scripts/lib_host.sh scripts/set_host.sh scripts/registry_load.sh scripts/smoke.sh scripts/seed_demo.sh scripts/kc_apply_email_theme.sh "${STAGE}/scripts/"
-cp compose/fonts/.gitkeep "${STAGE}/compose/fonts/"
-cp seed/*.mjs seed/run.sh seed/README.md "${STAGE}/seed/"
+while IFS= read -r entry; do
+  entry="${entry%%#*}"; entry="${entry//[[:space:]]/}"
+  case "${entry}" in ''|'!'*|'~'*) continue ;; esac
+  [[ -e "${entry}" ]] || { echo "нет ${entry} (scripts/bundle_manifest.txt) — бандл был бы неполным" >&2; exit 1; }
+  mkdir -p "${STAGE}/$(dirname "${entry}")"
+  cp -r "${entry}" "${STAGE}/${entry}"
+done < scripts/bundle_manifest.txt
 cp scripts/bundle_install.sh "${STAGE}/install.sh"
 
 # Шрифты: только явно указанный каталог (см. шапку). Каталог проверяем заранее: тихий бандл без шрифтов, когда
@@ -129,7 +123,7 @@ if [[ -n "${FONTS_DIR}" ]]; then
 else
   log "шрифты не включены (--fonts не указан): интерфейс будет на запасной гарнитуре, шрифты можно добавить при установке"
 fi
-[[ -f RUNBOOK.md ]] && cp RUNBOOK.md "${STAGE}/RUNBOOK.md"
+cp RUNBOOK.md "${STAGE}/RUNBOOK.md"
 
 cat > "${STAGE}/README.md" <<EOF
 # RTK School CRM — офлайн-поставка ${VERSION}
@@ -142,6 +136,7 @@ bash install.sh                     # в терминале спросит ок�
 bash install.sh --profile demo --host crm.example.local --seed   # демо-стенд с моковыми данными, без вопросов
 bash install.sh --profile demo --no-seed                         # демо-стенд, чистая система
 bash install.sh --profile prod --host crm.example.local          # боевое окружение (без демо-входа и моковых данных)
+bash install.sh --profile prod --host crm.example.local --admin-email ivanov@example.ru   # то же, адрес первого администратора задан
 bash install.sh --registry          # дополнительно поднять внутренний registry (localhost:5000)
 bash install.sh --monitoring        # дополнительно поднять Prometheus + Grafana (дашборды на /grafana)
 bash install.sh --no-mail           # demo без Mailpit (по умолчанию для demo все письма системы видны на /mail)
@@ -152,10 +147,17 @@ bash install.sh --no-mail           # demo без Mailpit (по умолчани
 бандла; иначе \`bash install.sh --fonts <каталог с *.woff>\`. Сменить домен после установки:
 \`bash scripts/set_host.sh --host <имя> --tls <режим>\`.
 
+В prod установщик создаёт одного администратора (логин \`admin\`) со сгенерированным временным паролем: он печатается
+крупным блоком в конце установки и лежит в \`compose/.env\` (\`CRM_ADMIN_INITIAL_PASSWORD\`); при первом входе Keycloak
+потребует задать свой. Демо-пользователей в prod нет.
+
 Моковые данные (только demo) можно залить и позже: \`bash scripts/seed_demo.sh\`. Установщик сам
 проверяет SHA256SUMS до загрузки образов и падает при любом расхождении. Подпись бандла (cosign)
 и описание перехода на внутренний registry — в RUNBOOK.md.
 EOF
+
+# --- 3a. Всё, на что ссылаются RUNBOOK и README бандла, лежит в бандле (или явно помечено в манифесте) ----------
+bash scripts/check_bundle_refs.sh --stage "${STAGE}"
 
 # --- 4. Контрольные суммы всех файлов бандла --------------------------------
 ( cd "${STAGE}" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS )
