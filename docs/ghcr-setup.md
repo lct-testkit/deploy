@@ -11,7 +11,7 @@
    fine-grained токены для пакетов — только classic.
 2. Срок действия — на своё усмотрение (рекомендуется не «No expiration»).
    Токен выпускается от имени сервисного пользователя-члена организации
-   `lct-testkit`, которому выдан **Read** на пакеты `api`, `web`, `mock-*`
+   `lct-testkit`, которому выдан **Read** на пакеты `api`, `web`, `mock-*`, `site`
    (Package settings → Manage Actions access / Manage access).
 3. Scope: **только** `read:packages`. Никаких прав на запись/push — это
    «robot-аккаунт только на pull»: утечёт — пушить образы им нельзя.
@@ -41,7 +41,7 @@ Manage retention policy):
 
 ## 3. Права CI на push
 
-Пуш образов (`build.yml`) выполняется под `GITHUB_TOKEN` самого workflow
+Пуш образов (`docker-publish.yml` у `backend`/`frontend`, `build.yml` у моков и сайта в этом репозитории) выполняется под `GITHUB_TOKEN` самого workflow
 с `permissions: packages: write` в этом workflow — отдельный секрет для
 пуша не нужен, только для pull на VM (см. п.1).
 
@@ -62,6 +62,6 @@ Manage retention policy):
 4. Добавить один и тот же токен секретом **в оба** репозитория:
    `backend` → Settings → Secrets and variables → Actions → New repository
    secret → имя `DEPLOY_DISPATCH_TOKEN`; то же самое в `frontend`.
-5. Проверка — `workflow_dispatch` любого из `build.yml` (Actions → build →
+5. Проверка — `workflow_dispatch` `ci.yml` в `backend` или `frontend` (Actions → ci →
    Run workflow) или обычный push: шаг «Уведомить deploy» должен пройти
    без `::warning::`, а в `deploy` появиться коммит `chore(images): ...`.

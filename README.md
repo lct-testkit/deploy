@@ -41,7 +41,7 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `.github/workflows/docker-publish.yml` | Общий конвейер публикации образа (вызывается из backend/frontend) |
 | `.github/workflows/notify.yml` | Приём dispatch: проверка образа → стек с новым образом → коммит в `images.yaml` |
 | `.github/workflows/validate.yml` | yamllint, actionlint, shellcheck, hadolint, compose/helm, drift |
-| `.github/workflows/e2e.yml` | Стенд из образов + бэкап/восстановление; офлайн-бандл без сети (ночью и на релизе) |
+| `.github/workflows/e2e.yml` | Стенд из образов + бэкап/восстановление (на PR и ночью); офлайн-бандл без сети — только на релизе и только на GitHub-hosted раннере (пока их нет, релиз идёт вручную без этого шага, [`docs/ci-self-hosted.md`](docs/ci-self-hosted.md)) |
 | `.github/workflows/build.yml` | Сборка образов deploy-репо: моки и сайт школы `site` (self-hosted, multi-arch, Trivy, cosign; [`docs/ci-self-hosted.md`](docs/ci-self-hosted.md)) |
 | `site/`, `docs/site.md` | Сайт ИТ-Школы РТК на Laravel (профиль compose `site`): лендинг, форма заявки, API `GET /api/v1/leads` для CRM; интерфейс на rt-ui |
 | `.github/workflows/release.yml` | На теге `vX.Y.Z`: e2e → бандл → подпись → GitHub Release |
