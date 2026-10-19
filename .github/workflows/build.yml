@@ -28,7 +28,9 @@ permissions:
 jobs:
   build:
     name: build (${{ matrix.image }})
-    runs-on: [self-hosted, lct]
+    # Сайт — на x86_64-раннере (метка lct-x64): amd64 под QEMU на aarch64 не собирает pdo_pgsql (autom4te/m4).
+    # У этого раннера нет метки lct, поэтому прочие джобы (e2e-стек и т. п.) на него не попадают.
+    runs-on: ${{ fromJSON(matrix.runs-on || '["self-hosted", "lct"]') }}
     # amd64 под QEMU на 2 vCPU: компиляция pdo_pgsql сайта и два скана — с запасом на медленный раннер.
     timeout-minutes: 75
     permissions:
@@ -50,6 +52,7 @@ jobs:
             npm-token: "true"
             # Только x86_64: все узлы стенда amd64, а сборка pdo_pgsql под arm64 (QEMU/alpine) падает на autom4te.
             platforms: linux/amd64
+            runs-on: '["self-hosted", "lct-x64"]'
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
       # Пусто у образов без приватных npm-зависимостей: условие в secret-envs ниже тогда не передаёт секрет.
@@ -63,6 +66,8 @@ jobs:
 
       # Кросс-сборка требует binfmt-обработчика QEMU для чужой архитектуры (как в docker-publish.yml).
       - name: QEMU (binfmt) для сборки чужой архитектуры
+        # Одноархитектурной сборке на родном раннере эмуляция не нужна.
+        if: ${{ !matrix.platforms || contains(matrix.platforms, ',') }}
         run: |
           set -euo pipefail
           case "$(uname -m)" in
