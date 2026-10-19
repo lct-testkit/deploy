@@ -127,6 +127,13 @@ external:
     # `docker image inspect`, 19.10.2026 (индекс multi-arch amd64/arm64).
     ref: docker.io/axllent/mailpit:v1.31.6
     digest: "sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387"
+  rqlite:
+    # Кластерное хранилище писем Mailpit для HA (compose/ha/rqlite.yml, docs/ha-patroni.md): трёхузловой кластер
+    # SQLite на Raft. В одиночном стенде не используется (там SQLite-файл в томе), но образ едет в офлайн-бандле
+    # — на узлы HA он грузится так же, как остальные. 10.6.2 — не latest; digest — `docker buildx imagetools
+    # inspect`, 19.10.2026 (индекс multi-arch: amd64, arm64, arm/v6, arm/v7).
+    ref: docker.io/rqlite/rqlite:10.6.2
+    digest: "sha256:3ab3b70519b3ac0aad63b48dde5d09ecb5be984aca8bca95a780e3a79515135a"
 
 # Профили compose. core поднимается всегда (`docker compose up -d`): это
 # ровно то, что запускает compose/docker-compose.yml без --profile.
@@ -162,3 +169,5 @@ profiles:
     - grafana
   mail:
     - mailpit
+  ha:
+    - rqlite  # compose/ha/rqlite.yml на узлах HA, не профиль основного compose

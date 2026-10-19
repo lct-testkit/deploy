@@ -21,6 +21,9 @@
 - **Файлы (S3)** — кластер SeaweedFS в `/opt/seaweed` на каждом узле (master + volume, три датацентра `dc1..dc3`,
   репликация `100` — две копии в разных ДЦ). Сервис `seaweedfs` основного стека на лидере — это filer + S3-шлюз:
   данные идут в кластер, метаданные filer лежат в Postgres (БД `seaweedfs`).
+- **Почта (Mailpit)** — ловушка писем (профиль `mail`) на лидере хранит письма не в локальном файле, а в кластере rqlite
+  (`/opt/rqlite` на каждом узле, запущен всегда, как etcd): после смены лидера новый Mailpit открывает те же письма.
+  Подробности — раздел «Mailpit на rqlite».
 - **DNS** — A-запись `lct.velikoss.ru` в Cloudflare; при смене лидера её обновляет скрипт.
 - **TLS** — Caddy (`TLS_MODE=acme`); том `rtk-crm_caddy_data` лидер раз в 2 минуты раздаёт остальным узлам, чтобы после
   failover не выпускать сертификат заново (лимит Let's Encrypt на повторные выпуски).
@@ -64,6 +67,7 @@
   оставляйте репликой с `nofailover: true` или смените тип CPU на `host`/`x86-64-v2`.
 - Базы создаются с коллацией `C.UTF-8` (не `ru_RU.utf8`): иначе узлы с другим дистрибутивом/glibc либо не примут
   подключения (нет локали), либо получат неконсистентные текстовые индексы.
+- Для Mailpit на rqlite на каждом узле нужны `/opt/rqlite`, `/srv/rqlite` (владелец uid 1000) и загруженный офлайн образ `rqlite`.
 - Файрвол ufw включён на всех узлах (см. приложение): без него REST API Patroni и Postgres торчат в интернет.
 
 ## Развёртывание
@@ -107,6 +111,93 @@
    unit и timer из приложения A, `systemctl enable --now rtk-caddy-sync.timer`.
 8. Первый запуск на лидере: `/usr/local/sbin/rtk-ha-trigger.sh manual master` — обновит DNS и поднимет стек.
 
+## Mailpit на rqlite
+
+Без этого Mailpit пишет письма в SQLite-файл тома `mailpit_data` на лидере, и после failover новый лидер показывает пустой
+ящик. Поэтому в HA Mailpit хранит письма в [rqlite](https://rqlite.io) — распределённой SQLite на Raft (образ
+`rqlite/rqlite`, multi-arch: подходит и для aarch64-, и для amd64-узлов; версия и digest — `external.rqlite` в
+`images.yaml`, образ едет в офлайн-бандле вместе с остальными). Mailpit v1.31.6 умеет внешнюю БД из коробки:
+`MP_DATABASE=http://логин:пароль@хост:4001` (compose-переменная `MAILPIT_DATABASE`), драйвер сам находит лидера кластера и
+при отказе переходит на другие узлы.
+
+Одиночный стенд ничего не меняет: `MAILPIT_DATABASE` пуста — письма лежат в файле `/data/mailpit.db`.
+
+**Почему отдельный compose-проект, а не systemd-юнит и не часть основного стека.** rqlite нужен на всех трёх узлах постоянно
+(иначе нет кворума 2 из 3), а основной стек `rtk-crm` на репликах остановлен — значит, в него rqlite не положить. Остаётся
+отдельный проект `rtk-rqlite` в `/opt/rqlite`: ровно так же в этой схеме устроен SeaweedFS (`/opt/seaweed`, `network_mode: host`,
+`restart: unless-stopped`, `.env` с адресом узла), образ грузится так же офлайн, обновление — тот же `docker compose pull/up`,
+а отдельный systemd-юнит добавил бы второй способ запускать контейнеры. Файлы — `compose/ha/rqlite.yml`,
+`compose/ha/rqlite.env.example`, `compose/ha/rqlite-auth.example.json`.
+
+### Установка (на каждом из трёх узлов)
+
+```bash
+install -d -m 755 /opt/rqlite && install -d -o 1000 -g 1000 -m 700 /srv/rqlite   # uid 1000 — пользователь rqlite в образе
+cp compose/ha/rqlite.yml /opt/rqlite/docker-compose.yml
+cp compose/ha/rqlite.env.example /opt/rqlite/.env && chmod 600 /opt/rqlite/.env
+cp compose/ha/rqlite-auth.example.json /opt/rqlite/auth.json && chmod 600 /opt/rqlite/auth.json
+```
+
+1. В `/opt/rqlite/.env`: `NODE_ID` (`n1`/`n2`/`n3`) и `NODE_IP` (WG-адрес узла) — свои на каждом узле;
+   `RQLITE_IMAGE` — строка из `.env.images` основного стека (`grep '^RQLITE_IMAGE=' /opt/rtk-crm/compose/.env.images`),
+   образ уже загружен офлайн (`rtk-offline/*`).
+2. В `/opt/rqlite/auth.json` задать три пароля (**одинаковые на всех узлах**; только `[A-Za-z0-9]`, чтобы их можно было
+   вставить в URL без экранирования, например `openssl rand -hex 24`): `mailpit` — для Mailpit (права `query`, `execute`,
+   `status`; `status` обязателен — по нему драйвер узнаёт лидера), `cluster` — узлы друг для друга (`join`, `notify`), `admin` —
+   оператору (`all`: проверка `/nodes`, бэкап). Без файла пользователей rqlite открыт всем, кто достанет до WG-адреса, —
+   запускать без него нельзя; сам rqlite слушает только `NODE_IP`.
+3. Файрвол: порты 4001/4002 доступны по `wg0` (правило `ufw allow in on wg0` уже есть), а Mailpit в контейнере ходит к rqlite
+   своего узла по WG-адресу через docker-сеть — добавьте `4001` в правило для `172.16.0.0/12` (см. приложение, ufw).
+4. Запустить на всех трёх узлах примерно одновременно (первый запуск ждёт остальных и пробует снова, пока не соберутся все
+   три; `-bootstrap-expect 3`): `cd /opt/rqlite && docker compose up -d`. Позже узел можно перезапускать по одному — он
+   вернётся в собранный кластер из сохранённого состояния.
+5. Проверка (с любого узла, `A=admin:<пароль>`):
+
+   ```bash
+   curl -s -u $A 'http://10.10.0.1:4001/nodes' | jq 'map_values({api_addr, voter, reachable, leader})'   # три узла, один leader:true
+   curl -s -u $A http://10.10.0.1:4001/readyz                                                           # [+]node ok, leader ok, store ok, db ok
+   curl -s -u $A http://10.10.0.1:4001/status | jq '.store.raft.state, .store.leader.node_id'
+   ```
+
+   Без `-u` те же запросы возвращают 401.
+6. В `/opt/rtk-crm/compose/.env` на **каждом** узле — `COMPOSE_PROFILES=mail` (если не стоит) и `MAILPIT_DATABASE` с адресом
+   **rqlite этого же узла**. Это единственная строка `.env`, которая у узлов разная: Mailpit должен стартовать, даже когда
+   остальные узлы недоступны, поэтому ходит в локальный rqlite, а остальной кластер находит сам.
+
+   ```bash
+   # n1; на n2 — 10.10.0.2, на n3 — 10.10.0.3
+   MAILPIT_DATABASE='http://mailpit:<пароль mailpit>@10.10.0.1:4001/?timeout=30'
+   ```
+
+   `timeout=30` нужен потому, что при недоступном соседе запрос `/nodes` занимает около 6 с, а таймаут драйвера по умолчанию
+   короче: при перезапуске в момент отказа узла Mailpit терял первую попытку подключения (в замерах справлялся со второй).
+7. Применить на лидере: `/usr/local/sbin/rtk-ha-trigger.sh manual master` (пересоздаст `mailpit` с новой БД). Реплики
+   подхватят значение при следующем failover.
+
+Порядок на живом стенде: rqlite на трёх узлах и проверка кластера, затем `.env` и ufw на узлах, затем перезапуск стека на
+лидере. Письма, которые уже лежат в файле `mailpit_data`, **не переносятся**: Mailpit сменит хранилище и начнёт с пустого
+ящика (для ловушки писем это допустимо; старые письма остаются в томе, их можно снова открыть, вернув `MAILPIT_DATABASE=`).
+
+### Что происходит при отказах
+
+| Событие | Результат |
+|---------|-----------|
+| Failover Patroni (лидер меняется) | Mailpit нового лидера открывает тот же кластер: все письма на месте, новые принимаются |
+| Падение одного узла (в том числе лидера rqlite) | кворум 2 из 3, rqlite выбирает нового лидера за секунды, Mailpit продолжает работать; вернувшийся узел догоняет данные сам |
+| Потеря двух узлов | кворума нет: Mailpit **не принимает** письма (SMTP-клиенту отдаётся ошибка) и **не показывает** ящик (интерфейс и API отвечают ошибкой) — и чтение, и запись идут через лидера Raft. CRM при этом работает (Postgres под Patroni — отдельный кворум). Как только возвращается второй узел, почта оживает без вмешательства |
+
+### Бэкап
+
+Раз в сутки на любом узле (письма в ловушке не критичны, но снимок дёшев):
+
+```bash
+curl -s -u admin:<пароль> http://10.10.0.1:4001/db/backup -o /var/backups/mailpit-$(date +%F).sqlite
+```
+
+Файл — обычный SQLite (`sqlite3 … 'select count(*) from mailbox'`). Восстановление — `POST /db/load` тем же файлом на
+работающем кластере: `curl -u admin:… -H 'Content-Type: application/octet-stream' --data-binary @файл http://10.10.0.1:4001/db/load`.
+Данные самих узлов лежат в `/srv/rqlite`.
+
 ## Грабли, на которые мы наступили
 
 - Колбэк, запущенный из процесса Patroni, наследует его группы: если `postgres` добавили в `docker` уже после старта
@@ -126,6 +217,7 @@ patronictl -c /etc/patroni/patroni.yml switchover crm --leader n1 --candidate n3
 tail -f /var/log/patroni-cf.log                                                             # что делал колбэк
 systemctl list-timers rtk-caddy-sync.timer                                                  # синхронизация сертификата
 curl -s http://10.10.0.1:9333/dir/status | jq '.Topology.DataCenters[].Id'                  # топология SeaweedFS
+curl -s -u admin:… http://10.10.0.1:4001/nodes                                              # кластер rqlite (почта Mailpit)
 ```
 
 ## Ограничения
@@ -136,7 +228,9 @@ curl -s http://10.10.0.1:9333/dir/status | jq '.Topology.DataCenters[].Id'      
 - Сессии (Redis, Keycloak) живут на лидере и при failover сбрасываются: пользователям нужно войти заново.
 - Доступность для клиентов ограничена кэшем DNS (в тестах 1–3 минуты). Если колбэк не смог обновить DNS за 5 попыток,
   запись нужно поправить вручную или повторить `rtk-ha-trigger.sh manual master` на лидере.
-- Бэкапов по расписанию нет — настройте `pg_dump` на лидере и копирование данных S3.
+- Бэкапов по расписанию нет — настройте `pg_dump` на лидере и копирование данных S3; для почты — `/db/backup` rqlite (см. выше).
+- rqlite и Mailpit на живом HA-стенде (WireGuard, три VPS) не проверялись: схема отработана локально на трёх контейнерах
+  rqlite в отдельной docker-сети (переключение Mailpit между узлами, догон вернувшегося узла, потеря кворума).
 
 ## Приложение A. Скрипты и конфиги
 
@@ -347,6 +441,6 @@ ufw default deny incoming; ufw default allow outgoing; ufw default deny routed
 ufw allow 22/tcp; ufw allow 80/tcp; ufw allow 443/tcp; ufw allow 8333/tcp
 for ip in <IP_n1> <IP_n2> <IP_n3>; do ufw allow proto udp from $ip to any port 51820; done
 ufw allow in on wg0
-ufw allow proto tcp from 172.16.0.0/12 to any port 5432,8333,8080,8888,9333,18080,18888,19333
+ufw allow proto tcp from 172.16.0.0/12 to any port 4001,5432,8333,8080,8888,9333,18080,18888,19333
 ufw --force enable
 ```
