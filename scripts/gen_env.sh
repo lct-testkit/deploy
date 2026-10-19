@@ -3,12 +3,15 @@
 #
 #   bash scripts/gen_env.sh [--dir compose] [--state-dir <каталог>] [--profile demo|prod]
 #                           [--host <имя/IP>] [--tls off|internal|acme] [--fonts <каталог>]
-#                           [--port-offset N] [--force]
+#                           [--port-offset N] [--mail on|off] [--force]
 #
 #   --tls    off (по умолчанию): локальный стенд, http://ХОСТ:8080 и https://ХОСТ:8443 с самоподписанным сертификатом;
 #            internal: HTTPS на 443 с самоподписанным сертификатом Caddy (закрытый контур, IP, внутренние имена);
 #            acme: HTTPS на 443 с сертификатом Let's Encrypt (публичный домен, DNS на этот сервер, порты 80/443 из интернета).
 #            internal и acme требуют --host и несовместимы с --port-offset (порты 80/443/8333 фиксированы).
+#   --mail   on|off: Mailpit — ловушка писем (профиль compose `mail`, интерфейс на /mail под логином mail и случайным паролем
+#            MAILPIT_UI_PASSWORD из .env). on: SMTP api/worker и Keycloak указывают на mailpit, COMPOSE_PROFILES=mail.
+#            По умолчанию: demo — on, prod — off (SMTP_* остаются пустыми и настраиваются под реальный релей).
 #   --fonts  каталог с *.woff шрифтов Rostelecom Basis (лицензионные, в образ web не входят): копируются в runtime/fonts.
 #
 # Читает шаблоны из --dir (по умолчанию compose/ рядом со скриптом) и создаёт в
@@ -40,6 +43,7 @@ HOST=""
 TLS_MODE="off"
 FONTS_SRC=""
 PORT_OFFSET=0
+MAIL=""
 FORCE=0
 
 while [[ $# -gt 0 ]]; do
@@ -51,6 +55,7 @@ while [[ $# -gt 0 ]]; do
     --tls) TLS_MODE="$2"; shift 2 ;;
     --fonts) FONTS_SRC="$2"; shift 2 ;;
     --port-offset) PORT_OFFSET="$2"; shift 2 ;;
+    --mail) MAIL="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo pipefail/!p}' "$0"; exit 0 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
@@ -58,6 +63,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "${PROFILE}" in demo|prod) ;; *) echo "--profile: demo|prod" >&2; exit 2 ;; esac
+[[ -n "${MAIL}" ]] || { [[ "${PROFILE}" == demo ]] && MAIL=on || MAIL=off; }
+case "${MAIL}" in on|off) ;; *) echo "--mail: on|off" >&2; exit 2 ;; esac
 case "${PORT_OFFSET}" in ''|*[!0-9]*) echo "--port-offset: нужно неотрицательное целое" >&2; exit 2 ;; esac
 rtk_check_mode "${TLS_MODE}" "${HOST}" "${PORT_OFFSET}" || exit 2
 if [[ -n "${FONTS_SRC}" ]]; then
@@ -109,6 +116,7 @@ S3_SECRET_KEY="$(rand 40)"
 S3_SIGN_ACCESS_KEY="$(rand 20)"
 S3_SIGN_SECRET_KEY="$(rand 40)"
 CMS_WEBHOOK_SECRET="$(rand 40)"
+MAILPIT_UI_PASSWORD="$(rand 24)"
 
 cp "${EXAMPLE}" "${ENV_FILE}"
 
@@ -134,11 +142,16 @@ set_var CMS_WEBHOOK_SECRET "${CMS_WEBHOOK_SECRET}"
 # машине (dev/demo/prod) различаются смещением портов.
 rtk_apply_mode_env "${ENV_FILE}" "${TLS_MODE}" "${HOST}" "${PORT_OFFSET}"
 
+# Ловушка писем (Mailpit): SMTP api/worker, COMPOSE_PROFILES, логин/пароль интерфейса /mail.
+rtk_apply_mail_env "${ENV_FILE}" "${MAIL}" "${HOST}" "${MAILPIT_UI_PASSWORD}"
+MAIL_FROM=""
+[[ "${MAIL}" == on ]] && MAIL_FROM="$(rtk_mail_from "${HOST}")"
+
 # --- runtime-конфиги с теми же секретами ---------------------------------------
 mkdir -p "${RUNTIME}/keycloak" "${RUNTIME}/seaweedfs"
 
 rtk_render_realm "${TARGET_DIR}/keycloak/realm-crm.json" "${RUNTIME}/keycloak/realm-crm.json" \
-  "${KEYCLOAK_CLIENT_SECRET}" "${KEYCLOAK_ADMIN_CLIENT_SECRET}" "${TLS_MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}"
+  "${KEYCLOAK_CLIENT_SECRET}" "${KEYCLOAK_ADMIN_CLIENT_SECRET}" "${TLS_MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}" "${MAIL_FROM}"
 
 sed \
   -e "s|crm_sign_access|${S3_SIGN_ACCESS_KEY}|g" \
@@ -184,3 +197,8 @@ echo "ВНИМАНИЕ: демо-пользователи realm (Admin12345678!,
 echo "Удалите их или смените пароли в консоли Keycloak до открытия доступа извне."
 echo "Пароль администратора Keycloak сохранён в ${ENV_FILE} (KEYCLOAK_ADMIN_PASSWORD)."
 echo "Пароль администратора Grafana (профиль monitoring) — там же, GRAFANA_ADMIN_PASSWORD."
+if [[ "${MAIL}" == on ]]; then
+  echo "Почта (Mailpit, все письма системы): ${RTK_BASE_URL}/mail/ — логин mail, пароль в ${ENV_FILE} (MAILPIT_UI_PASSWORD)."
+else
+  echo "Почта: SMTP_* в ${ENV_FILE} не заданы (письма не уходят). Ловушка писем: --mail on."
+fi

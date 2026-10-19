@@ -141,6 +141,7 @@ bash install.sh --profile demo --no-seed                         # демо-ст
 bash install.sh --profile prod --host crm.example.local          # боевое окружение (без демо-входа и моковых данных)
 bash install.sh --registry          # дополнительно поднять внутренний registry (localhost:5000)
 bash install.sh --monitoring        # дополнительно поднять Prometheus + Grafana (дашборды на /grafana)
+bash install.sh --no-mail           # demo без Mailpit (по умолчанию для demo все письма системы видны на /mail)
 \`\`\`
 
 Домен и TLS: \`--tls acme\` (Let's Encrypt, публичный домен), \`--tls internal\` (самоподписанный, закрытый контур
