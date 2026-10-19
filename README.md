@@ -26,7 +26,7 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `charts/rtk-crm/` | Helm-чарт (та же топология); проверяется lint + kubeconform + drift |
 | `mocks/lms`, `mocks/cms` | Заглушки внешних контрактов (LMS, Laravel CMS), профиль compose `integrations` |
 | `compose/prometheus/`, `compose/grafana/` | Профиль compose `monitoring` / `values.monitoring.enabled` в чарте: Prometheus (TSDB на volume) + Grafana (датасорс и 2 дашборда — file-based provisioning, не через UI), `/grafana` за Caddy |
-| `compose/` сервис `mailpit` | Профиль compose `mail`: Mailpit — ловушка писем демо-стенда (приглашения, сброс пароля, ссылки подписантам, уведомления, письма Keycloak), интерфейс `/mail` за Caddy под basic-авторизацией; для demo включён по умолчанию (`install.sh --no-mail` отключает) |
+| `compose/` сервис `mailpit` | Профиль compose `mail`: Mailpit — ловушка писем демо-стенда (приглашения, сброс пароля, ссылки подписантам, уведомления, письма Keycloak), интерфейс `/mail` за Caddy, только чтение (demo — всем, prod — после входа в CRM); для demo включён по умолчанию (`install.sh --no-mail` отключает) |
 | `scripts/render_env_images.py` | `images.yaml` → `.env.images` (режимы `digest` / `bundle` / `registry`) |
 | `scripts/gen_env.sh`, `lib_host.sh` | Секреты + согласованные `runtime/keycloak/realm-crm.json` и `runtime/seaweedfs/s3.json`; `--host`, `--tls off\|internal\|acme`, `--fonts`, `--port-offset`. `lib_host.sh` — общие функции адреса и режима TLS |
 | `scripts/set_host.sh` | Смена адреса и режима TLS у установленного стенда: `.env`, realm, адреса клиента в БД Keycloak, перезапуск |

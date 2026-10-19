@@ -24,7 +24,7 @@ compose не стартует (fail closed) — так «в compose один dig
   Grafana (дашборды по метрикам `api`/`worker`/`keycloak` из `prometheus/`, `grafana/`), отдаётся через Caddy на
   `/grafana` — см. `../RUNBOOK.md`, «Мониторинг и логи»; `mail` — Mailpit, ловушка писем: принимает по SMTP
   (`mailpit:1025`, только во внутренней сети) всю почту api/worker и Keycloak, интерфейс на `/mail` за Caddy
-  (логин `mail`, пароль `MAILPIT_UI_PASSWORD` из `.env`; без пароля маршрут закрыт). Для demo `gen_env.sh`
+  (только чтение; `MAILPIT_UI=public` — всем, `crm` — вошедшим в CRM, пусто — закрыт). Для demo `gen_env.sh`
   включает его сам (`COMPOSE_PROFILES=mail` в `.env`), для prod — нет; см. `../RUNBOOK.md`, «Ключи аудита и почта».
 - `.env.example` — переменные окружения (структура и дефолты как в `backend/.env.example`).
   Секретов там демо-значения; боевой `.env` генерирует `../scripts/gen_env.sh`.

@@ -113,7 +113,7 @@ external:
   mailpit:
     # Ловушка писем демо-стенда (профиль compose `mail`): принимает всю исходящую почту системы (приглашения,
     # сброс пароля, ссылки подписантам, уведомления) по SMTP :1025 во внутренней сети и показывает её в веб-
-    # интерфейсе на /mail за Caddy (basic-авторизация). v1.31.6 — не latest; digest — `docker pull` +
+    # интерфейсе на /mail за Caddy (вход по сессии CRM). v1.31.6 — не latest; digest — `docker pull` +
     # `docker image inspect`, 19.10.2026 (индекс multi-arch amd64/arm64).
     ref: docker.io/axllent/mailpit:v1.31.6
     digest: "sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387"

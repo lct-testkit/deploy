@@ -406,8 +406,8 @@ services:
       CRM_TLS_SNIPPET: ${CRM_TLS_SNIPPET:-tls_internal}
       S3_SITE_ADDRESS: ${S3_SITE_ADDRESS:-:8333}
       S3_TLS_SNIPPET: ${S3_TLS_SNIPPET:-tls_none}
-      # Маршрут /mail (Mailpit, профиль mail) открывается, только если задан пароль интерфейса; без него — не маршрутизируется.
-      MAILPIT_UI_PASSWORD_SET: ${MAILPIT_UI_PASSWORD:+1}
+      # Маршрут /mail (Mailpit, профиль mail), только чтение: public — всем (demo), crm — вошедшим в CRM, пусто — 404.
+      MAILPIT_UI: ${MAILPIT_UI:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -596,8 +596,7 @@ services:
   # realm) и показывает её в веб-интерфейсе на /mail (за Caddy). Письма содержат ссылки-приглашения, сброс
   # пароля и ссылки подписантам, поэтому: SMTP :1025 слушает только во внутренней сети crm (порт не
   # публикуется), веб-интерфейс :8025 наружу не публикуется вовсе — доступ только через Caddy, который
-  # открывает /mail лишь при заданном MAILPIT_UI_PASSWORD, а сам Mailpit дополнительно требует basic-авторизацию
-  # (MP_UI_AUTH). Профиль mail: для demo его включает gen_env.sh (COMPOSE_PROFILES=mail в .env), в prod —
+  # открывает /mail только на чтение и только при MAILPIT_UI=public (demo) или crm (сессия CRM). Профиль mail: для demo его включает gen_env.sh (COMPOSE_PROFILES=mail в .env), в prod —
   # только явно (--mail) и с настоящим SMTP-релеем вместо ловушки там, где письма должны доходить до людей.
   mailpit:
     profiles: ["mail"]
@@ -609,8 +608,8 @@ services:
       MP_DATABASE: /data/mailpit.db
       # Лимит на число писем: самые старые удаляются, чтобы том не рос без границ.
       MP_MAX_MESSAGES: ${MAILPIT_MAX_MESSAGES:-1000}
-      # `логин:пароль`; пустой MAILPIT_UI_PASSWORD -> переменная пустая, но Caddy при этом маршрут /mail не открывает.
-      MP_UI_AUTH: ${MAILPIT_UI_PASSWORD:+${MAILPIT_UI_USER:-mail}:${MAILPIT_UI_PASSWORD}}
+      # Доступ и «только чтение» обеспечивает Caddy (MAILPIT_UI); кнопку «удалить всё» ещё и прячем.
+      MP_HIDE_DELETE_ALL_BUTTON: "true"
       MP_SMTP_BIND_ADDR: 0.0.0.0:1025
       MP_UI_BIND_ADDR: 0.0.0.0:8025
     volumes:
