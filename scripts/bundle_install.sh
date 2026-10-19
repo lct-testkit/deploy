@@ -4,7 +4,7 @@
 #
 #   bash install.sh [--profile demo|prod] [--host <имя/IP>] [--tls acme|internal|off]
 #                   [--seed | --no-seed] [--fonts <каталог>] [--yes] [--port-offset N]
-#                   [--open-firewall] [--skip-dns-check] [--reconfigure] [--registry] [--no-start]
+#                   [--admin-email <адрес>] [--open-firewall] [--skip-dns-check] [--reconfigure] [--registry] [--no-start]
 #
 #   --profile      окружение: demo (по умолчанию) или prod (APP_PROFILE и APP_MODE=prod). Синоним: --env
 #   --host         адрес, по которому открывают систему (имя или IP): BASE_URL, Keycloak, S3, сертификат. Для prod обязателен
@@ -12,6 +12,8 @@
 #                  порты 80/443 из интернета); internal — HTTPS на 443, самоподписанный сертификат (закрытый контур, IP,
 #                  внутренние имена); off — без публичного TLS, http://ХОСТ:8080 и https://ХОСТ:8443 (локально, тест).
 #                  По умолчанию выводится из адреса: домен -> acme, IP и внутренние имена -> internal, localhost -> off
+#   --admin-email  только prod: адрес первого администратора CRM (по умолчанию admin@<хост>). Логин admin, пароль
+#                  временный, сгенерирован; печатается в итоговой сводке и лежит в compose/.env (CRM_ADMIN_INITIAL_PASSWORD)
 #   --seed         залить моковые данные (организации, контакты, сделки, задачи, ЕГРЮЛ, справочники, праздники,
 #                  сценарии удаления ПДн). Только demo; для demo включено по умолчанию
 #   --no-seed      поставить чистую систему без моковых данных
@@ -56,6 +58,7 @@ RECONFIGURE=0
 WITH_REGISTRY=0
 WITH_MONITORING=0
 MAIL=""
+ADMIN_EMAIL=""
 START=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -74,6 +77,7 @@ while [[ $# -gt 0 ]]; do
     --monitoring) WITH_MONITORING=1; shift ;;
     --mail) MAIL=on; shift ;;
     --no-mail) MAIL=off; shift ;;
+    --admin-email) ADMIN_EMAIL="${2:-}"; shift 2 ;;
     --no-start) START=0; shift ;;
     -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo pipefail/!p}' "${SELF}"; exit 0 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
@@ -167,6 +171,7 @@ case "${PORT_OFFSET}" in ''|*[!0-9]*) die "--port-offset: нужно неотр�
 [[ -z "${PROFILE}" ]] || case "${PROFILE}" in demo|prod) ;; *) die "--profile: demo|prod" ;; esac
 [[ -z "${HOST}" ]] || rtk_valid_host "${HOST}" || die "--host '${HOST}': допустимы буквы, цифры, точки и дефисы (имя или IPv4)"
 [[ -z "${TLS}" ]] || case "${TLS}" in off|internal|acme) ;; *) die "--tls: off|internal|acme" ;; esac
+[[ -z "${ADMIN_EMAIL}" ]] || rtk_valid_email "${ADMIN_EMAIL}" || die "--admin-email '${ADMIN_EMAIL}': некорректный адрес"
 if [[ -n "${FONTS_SRC}" ]]; then
   [[ -d "${FONTS_SRC}" ]] && compgen -G "${FONTS_SRC}/*.woff*" >/dev/null || die "--fonts: в '${FONTS_SRC}' нет каталога или файлов *.woff/*.woff2"
 fi
@@ -385,6 +390,7 @@ if [[ ! -f compose/.env ]]; then
   [[ -n "${HOST}" ]] && gen_args+=(--host "${HOST}")
   [[ -n "${FONTS_SRC}" ]] && gen_args+=(--fonts "${FONTS_SRC}")
   [[ -n "${MAIL}" ]] && gen_args+=(--mail "${MAIL}")
+  [[ -n "${ADMIN_EMAIL}" && "${PROFILE}" == prod ]] && gen_args+=(--admin-email "${ADMIN_EMAIL}")
   bash scripts/gen_env.sh "${gen_args[@]}"
 else
   echo "   compose/.env уже есть — не трогаю"
@@ -426,7 +432,7 @@ fi
 
 echo "== 5/6 smoke =="
 LOCAL_HTTP_PORT="$(grep -E '^HTTP_PORT=' compose/.env | cut -d= -f2)"
-bash scripts/smoke.sh "http://localhost:${LOCAL_HTTP_PORT}"
+bash scripts/smoke.sh "http://localhost:${LOCAL_HTTP_PORT}" --env-file compose/.env
 if [[ "${TLS}" != off ]]; then
   # Публичный адрес по HTTPS: у acme сертификат выпускается при первом обращении, smoke ждёт его до 5 минут.
   public_smoke_args=(--timeout 300)
@@ -449,6 +455,23 @@ if [[ "${WITH_MONITORING}" == 1 ]]; then
 fi
 if [[ ",${env_profiles}," == *,mail,* ]]; then
   echo "   Почта (Mailpit, все письма системы): ${FINAL_URL}/mail/ (только чтение)"
+fi
+if [[ "${PROFILE}" == prod ]]; then
+  admin_pass="$(grep -E '^CRM_ADMIN_INITIAL_PASSWORD=' compose/.env | tail -1 | cut -d= -f2- || true)"
+  admin_mail="$(grep -E '^CRM_ADMIN_INITIAL_EMAIL=' compose/.env | tail -1 | cut -d= -f2- || true)"
+  if [[ -n "${admin_pass}" ]]; then
+    echo
+    echo "################################################################"
+    echo "#  ПЕРВЫЙ АДМИНИСТРАТОР CRM (запишите, пароль временный)"
+    echo "#    адрес входа: ${FINAL_URL}"
+    echo "#    логин:       admin   (или ${admin_mail})"
+    echo "#    пароль:      ${admin_pass}"
+    echo "#  При первом входе Keycloak потребует задать новый пароль."
+    echo "#  Строка CRM_ADMIN_INITIAL_PASSWORD в compose/.env после смены пароля неактуальна — удалите её."
+    echo "################################################################"
+  else
+    echo "   вход: администратор, заведённый при первой установке (CRM_ADMIN_INITIAL_PASSWORD в compose/.env, если ещё не удалён; пароль после смены хранит Keycloak)"
+  fi
 fi
 if [[ "${PROFILE}" == demo ]]; then
   echo "   вход: на экране входа выберите демо-учётку (администратор, руководитель, менеджер, аудитор)"

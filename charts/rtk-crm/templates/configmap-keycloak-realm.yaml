@@ -12,4 +12,10 @@ metadata:
     {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 4 }}
 data:
   realm-crm.json: |-
+{{- if .Values.keycloak.realmJson }}
+{{ .Values.keycloak.realmJson | indent 4 }}
+{{- else if eq .Values.env.appProfile "prod" }}
+{{- fail "env.appProfile=prod: realm из чарта содержит демо-пользователей с публичными паролями. Сгенерируйте боевой realm (bash scripts/gen_env.sh --profile prod --host <имя>) и передайте: --set-file keycloak.realmJson=<state-dir>/runtime/keycloak/realm-crm.json" }}
+{{- else }}
 {{ .Files.Get "files/realm-crm.json" | indent 4 }}
+{{- end }}

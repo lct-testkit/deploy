@@ -277,6 +277,14 @@ env:
   # Хранение истории метрик Prometheus (TSDB на PVC persistence.prometheus).
   prometheusRetention: 15d
 
+keycloak:
+  # Свой realm вместо files/realm-crm.json (там демо-пользователи с публичными паролями). Для env.appProfile=prod
+  # ОБЯЗАТЕЛЕН: чарт без него не отрисуется. Боевой realm (без демо-пользователей, с первым администратором и
+  # секретами клиентов) создаёт scripts/gen_env.sh --profile prod; передайте его так:
+  #   --set-file keycloak.realmJson=<state-dir>/runtime/keycloak/realm-crm.json
+  # Секреты клиентов в нём должны совпадать с secrets.keycloakClientSecret / keycloakAdminClientSecret.
+  realmJson: ""
+
 # Секреты — шаблонизируются в Kubernetes Secret (см. templates/secret.yaml),
 # НЕ зашиты напрямую в Deployment/Job. Значения по умолчанию — те же
 # демо-дефолты, что в backend/.env.example (нужны, чтобы demo-seed и
@@ -296,10 +304,13 @@ secrets:
   grafanaAdminPassword: "admin"              # CHANGE ME for any real deployment (monitoring.enabled)
   # Пусто по умолчанию — функции выключены (хэш аудита v2, настройки не шифруются, почта не настроена),
   # как в backend/.env.example. Значение — только через Secret (--set secrets.xxx=... или values-prod.yaml).
+  # ОБЯЗАТЕЛЬНЫ при env.appProfile=prod (чарт не отрисуется без них): auditHmacKey, settingsEncryptionKey,
+  # fieldEncryptionKey, healthDetailsToken. Fernet-ключ: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+  # или head -c 32 /dev/urandom | base64 | tr '+/' '-_'.
   auditHmacKey: ""
   settingsEncryptionKey: ""
   smtpPassword: ""
-  # backend#62: Fernet-ключи шифрования ПДн учащегося (пусто — поля не шифруются), токен полного
+  # backend#62: Fernet-ключи шифрования ПДн учащегося (пусто — поля не шифруются; в prod ОБЯЗАТЕЛЕН), токен полного
   # /health/details, токены забора у сайта и LMS.
   fieldEncryptionKey: ""
   fieldEncryptionKeyPrev: ""

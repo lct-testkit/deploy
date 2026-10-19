@@ -146,7 +146,62 @@ rtk_apply_mail_env() {
   fi
 }
 
-# rtk_render_realm <шаблон realm> <результат> <секрет crm-bff> <секрет crm-admin> <режим> <хост> <http_port> <https_port> [адрес-отправителя]
+# rtk_admin_email <хост> [email] — адрес первого администратора: заданный явно или admin@ХОСТ (для IP и localhost —
+# admin@rtk-crm.local: адрес с IP-литералом Keycloak и SMTP-клиенты считают некорректным).
+rtk_admin_email() {
+  local host="${1:-}" explicit="${2:-}"
+  if [[ -n "${explicit}" ]]; then echo "${explicit}"; return; fi
+  case "${host}" in ''|localhost|127.*) echo "admin@rtk-crm.local"; return ;; esac
+  if rtk_is_ipv4 "${host}"; then echo "admin@rtk-crm.local"; else echo "admin@${host}"; fi
+}
+
+# rtk_valid_email <адрес> — грубая проверка (адрес попадает в JSON realm без экранирования: только безопасные знаки).
+rtk_valid_email() { [[ "$1" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]; }
+
+# rtk_prod_realm_users <realm.json> <email> <пароль> — профиль prod: из realm убираются демо-пользователи (их пароли
+# лежат в репозитории), остаётся служебная учётка сервисного клиента crm-admin и добавляется первый администратор:
+# логин admin, роль ADMIN, временный пароль (requiredActions UPDATE_PASSWORD: Keycloak потребует сменить его при первом входе).
+# Запись в БД CRM бэкенд создаёт сам при первом входе (JIT provisioning по роли realm), отдельный сид не нужен.
+# Файл правится на месте; массив users в realm-crm.json — последний ключ верхнего уровня.
+rtk_prod_realm_users() {
+  local file="$1" email="$2" password="$3" tmp
+  tmp="$(mktemp)"
+  awk -v email="${email}" -v pass="${password}" '
+    function admin_user() {
+      print "    {"
+      print "      \"username\": \"admin\","
+      print "      \"email\": \"" email "\","
+      print "      \"firstName\": \"Первый\","
+      print "      \"lastName\": \"Администратор\","
+      print "      \"enabled\": true,"
+      print "      \"emailVerified\": true,"
+      print "      \"requiredActions\": [\"UPDATE_PASSWORD\"],"
+      print "      \"credentials\": ["
+      print "        {"
+      print "          \"type\": \"password\","
+      print "          \"value\": \"" pass "\","
+      print "          \"temporary\": true"
+      print "        }"
+      print "      ],"
+      print "      \"realmRoles\": [\"ADMIN\"]"
+      print "    }"
+    }
+    state == 0 { print }
+    state == 0 && /^  "users": \[/ { state = 1; next }
+    state == 1 { print; if ($0 ~ /^    },$/) { admin_user(); state = 2 } next }
+    state == 2 && /^  \]/ { print "  ]"; state = 3 }
+  ' "${file}" > "${tmp}"
+  if ! grep -q '"username": "admin",' "${tmp}" || grep -q '"username": "admin.crm"' "${tmp}"; then
+    echo "realm: не удалось заменить пользователей (структура realm-crm.json изменилась?)" >&2; rm -f "${tmp}"; return 1
+  fi
+  grep -q 'service-account-crm-admin' "${tmp}" || { echo "realm: потеряна служебная учётка crm-admin" >&2; rm -f "${tmp}"; return 1; }
+  printf '}
+' >> "${tmp}"
+  mv "${tmp}" "${file}"
+}
+
+# rtk_render_realm <шаблон realm> <результат> <секрет crm-bff> <секрет crm-admin> <режим> <хост> <http_port> <https_port> [адрес-отправителя] [профиль] [email-админа] [пароль-админа]
+# Профиль prod (нужны email и пароль): демо-пользователи удаляются, создаётся первый администратор (rtk_prod_realm_users).
 # Если задан адрес отправителя — в realm добавляется smtpServer на mailpit:1025 (письма Keycloak попадают в ловушку).
 # Realm с секретами стенда и адресами клиента crm-bff (redirectUris, webOrigins, post.logout.redirect.uris).
 #   off:            localhost:8080 / localhost:8443 заменяются на ХОСТ:порты стенда (как раньше);
@@ -155,7 +210,7 @@ rtk_apply_mail_env() {
 # меняет, адреса в БД правит scripts/set_host.sh. Результат читает Keycloak под другим UID, права ставит вызывающий.
 rtk_render_realm() {
   local src="$1" dst="$2" bff="$3" adm="$4" mode="$5" host="$6" http_port="$7" https_port="$8"
-  local mail_from="${9:-}" pub="${host:-localhost}" tmp origin
+  local mail_from="${9:-}" profile="${10:-}" admin_email="${11:-}" admin_pass="${12:-}" pub="${host:-localhost}" tmp origin
   tmp="$(mktemp)"
   tr -d '\r' < "${src}" | sed -e "s|crm-bff-secret|${bff}|g" -e "s|crm-admin-secret|${adm}|g" > "${tmp}"
   if [[ -n "${mail_from}" ]]; then
@@ -173,6 +228,10 @@ rtk_render_realm() {
       -e "s|\"post.logout.redirect.uris\": \"|&${origin}/*##|" \
       "${tmp}"
     grep -q "\"${origin}/\*\"" "${tmp}" || { echo "realm: не удалось добавить ${origin}/* (структура realm-crm.json изменилась?)" >&2; rm -f "${tmp}"; return 1; }
+  fi
+  if [[ "${profile}" == prod ]]; then
+    [[ -n "${admin_email}" && -n "${admin_pass}" ]] || { echo "realm: для prod нужны email и пароль первого администратора" >&2; rm -f "${tmp}"; return 1; }
+    rtk_prod_realm_users "${tmp}" "${admin_email}" "${admin_pass}" || { rm -f "${tmp}"; return 1; }
   fi
   mv "${tmp}" "${dst}"
 }

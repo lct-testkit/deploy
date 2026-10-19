@@ -3,7 +3,7 @@
 #
 #   bash scripts/gen_env.sh [--dir compose] [--state-dir <каталог>] [--profile demo|prod]
 #                           [--host <имя/IP>] [--tls off|internal|acme] [--fonts <каталог>]
-#                           [--port-offset N] [--mail on|off] [--force]
+#                           [--port-offset N] [--mail on|off] [--admin-email <адрес>] [--force]
 #
 #   --tls    off (по умолчанию): локальный стенд, http://ХОСТ:8080 и https://ХОСТ:8443 с самоподписанным сертификатом;
 #            internal: HTTPS на 443 с самоподписанным сертификатом Caddy (закрытый контур, IP, внутренние имена);
@@ -12,6 +12,9 @@
 #   --mail   on|off: Mailpit — ловушка писем (профиль compose `mail`, интерфейс на /mail только для чтения: demo —
 #            всем, prod — вошедшим в CRM). on: SMTP api/worker и Keycloak указывают на mailpit, COMPOSE_PROFILES=mail.
 #            По умолчанию: demo — on, prod — off (SMTP_* остаются пустыми и настраиваются под реальный релей).
+#   --admin-email  только prod: адрес первого администратора CRM (по умолчанию admin@<хост>). Логин — admin,
+#            временный пароль генерируется, пишется в .env (CRM_ADMIN_INITIAL_PASSWORD) и печатается в конце; Keycloak
+#            требует сменить его при первом входе. Демо-пользователи realm в prod не создаются.
 #   --fonts  каталог с *.woff шрифтов Rostelecom Basis (лицензионные, в образ web не входят): копируются в runtime/fonts.
 #
 # Читает шаблоны из --dir (по умолчанию compose/ рядом со скриптом) и создаёт в
@@ -25,9 +28,8 @@
 # рассинхрону — приложение и Keycloak/SeaweedFS переставали понимать друг
 # друга. Здесь секрет подставляется во все три места сразу.
 #
-# Внимание: демо-ПОЛЬЗОВАТЕЛИ realm (Admin12345678! и т.п.) остаются — их
-# нужно удалить или сменить пароли в консоли Keycloak до открытия доступа
-# извне. Скрипт предупреждает об этом явно.
+# Демо-ПОЛЬЗОВАТЕЛИ realm (Admin12345678! и т.п.) остаются только в профиле demo. В prod они удаляются, а вместо них
+# создаётся один администратор `admin` с временным паролем (см. --admin-email).
 #
 # Зависимости: только bash, sed, tr, head, base64 (coreutils; никакого python/openssl — скрипт
 # ездит в офлайн-бандле на минимальные серверы).
@@ -44,6 +46,7 @@ TLS_MODE="off"
 FONTS_SRC=""
 PORT_OFFSET=0
 MAIL=""
+ADMIN_EMAIL=""
 FORCE=0
 
 while [[ $# -gt 0 ]]; do
@@ -56,6 +59,7 @@ while [[ $# -gt 0 ]]; do
     --fonts) FONTS_SRC="$2"; shift 2 ;;
     --port-offset) PORT_OFFSET="$2"; shift 2 ;;
     --mail) MAIL="$2"; shift 2 ;;
+    --admin-email) ADMIN_EMAIL="$2"; shift 2 ;;
     --force) FORCE=1; shift ;;
     -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo pipefail/!p}' "$0"; exit 0 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
@@ -67,6 +71,10 @@ case "${PROFILE}" in demo|prod) ;; *) echo "--profile: demo|prod" >&2; exit 2 ;;
 case "${MAIL}" in on|off) ;; *) echo "--mail: on|off" >&2; exit 2 ;; esac
 case "${PORT_OFFSET}" in ''|*[!0-9]*) echo "--port-offset: нужно неотрицательное целое" >&2; exit 2 ;; esac
 rtk_check_mode "${TLS_MODE}" "${HOST}" "${PORT_OFFSET}" || exit 2
+if [[ -n "${ADMIN_EMAIL}" ]]; then
+  [[ "${PROFILE}" == prod ]] || { echo "--admin-email: только для --profile prod" >&2; exit 2; }
+  rtk_valid_email "${ADMIN_EMAIL}" || { echo "--admin-email '${ADMIN_EMAIL}': некорректный адрес" >&2; exit 2; }
+fi
 if [[ -n "${FONTS_SRC}" ]]; then
   [[ -d "${FONTS_SRC}" ]] || { echo "--fonts: нет каталога ${FONTS_SRC}" >&2; exit 2; }
   compgen -G "${FONTS_SRC}/*.woff*" >/dev/null || { echo "--fonts: в ${FONTS_SRC} нет *.woff/*.woff2" >&2; exit 2; }
@@ -102,6 +110,15 @@ fernet_key() {
 ' | tr '+/' '-_')
 }
 
+# Пароль первого администратора (prod): политика realm требует длину 12+, заглавную, строчную и цифру.
+admin_password() {
+  local p
+  while :; do
+    p="$(rand 20)"
+    [[ "${p}" =~ [A-Z] && "${p}" =~ [a-z] && "${p}" =~ [0-9] ]] && { echo "${p}"; return; }
+  done
+}
+
 POSTGRES_PASSWORD="$(rand 32)"
 CRM_APP_PASSWORD="$(rand 32)"
 KEYCLOAK_ADMIN_PASSWORD="$(rand 24)"
@@ -111,6 +128,8 @@ KEYCLOAK_ADMIN_CLIENT_SECRET="$(rand 40)"
 SIGNATURE_SERVER_SECRET="$(rand 48)"
 AUDIT_HMAC_KEY="$(rand 48)"
 SETTINGS_ENCRYPTION_KEY="$(fernet_key)"
+FIELD_ENCRYPTION_KEY="$(fernet_key)"
+HEALTH_DETAILS_TOKEN="$(rand 40)"
 S3_ACCESS_KEY="$(rand 20)"
 S3_SECRET_KEY="$(rand 40)"
 S3_SIGN_ACCESS_KEY="$(rand 20)"
@@ -136,13 +155,22 @@ set_var KEYCLOAK_ADMIN_CLIENT_SECRET "${KEYCLOAK_ADMIN_CLIENT_SECRET}"
 set_var SIGNATURE_SERVER_SECRET "${SIGNATURE_SERVER_SECRET}"
 set_var AUDIT_HMAC_KEY "${AUDIT_HMAC_KEY}"
 set_var SETTINGS_ENCRYPTION_KEY "${SETTINGS_ENCRYPTION_KEY}"
+set_var FIELD_ENCRYPTION_KEY "${FIELD_ENCRYPTION_KEY}"
+set_var HEALTH_DETAILS_TOKEN "${HEALTH_DETAILS_TOKEN}"
 set_var S3_ACCESS_KEY "${S3_ACCESS_KEY}"
 set_var S3_SECRET_KEY "${S3_SECRET_KEY}"
 set_var CMS_WEBHOOK_SECRET "${CMS_WEBHOOK_SECRET}"
 set_var CMS_AUTH_TOKEN "${CMS_AUTH_TOKEN}"
 set_var SITE_DB_PASSWORD "${SITE_DB_PASSWORD}"
 set_var SITE_APP_KEY "${SITE_APP_KEY}"
-[[ "${PROFILE}" == "prod" ]] && set_var APP_MODE prod
+ADMIN_PASSWORD=""
+if [[ "${PROFILE}" == "prod" ]]; then
+  set_var APP_MODE prod
+  ADMIN_EMAIL="$(rtk_admin_email "${HOST}" "${ADMIN_EMAIL}")"
+  ADMIN_PASSWORD="$(admin_password)"
+  set_var CRM_ADMIN_INITIAL_EMAIL "${ADMIN_EMAIL}"
+  set_var CRM_ADMIN_INITIAL_PASSWORD "${ADMIN_PASSWORD}"
+fi
 
 # Порты, адреса и TLS-переменные Caddy по режиму (--tls) и хосту. В режиме off несколько окружений на одной
 # машине (dev/demo/prod) различаются смещением портов.
@@ -157,7 +185,8 @@ MAIL_FROM=""
 mkdir -p "${RUNTIME}/keycloak" "${RUNTIME}/seaweedfs"
 
 rtk_render_realm "${TARGET_DIR}/keycloak/realm-crm.json" "${RUNTIME}/keycloak/realm-crm.json" \
-  "${KEYCLOAK_CLIENT_SECRET}" "${KEYCLOAK_ADMIN_CLIENT_SECRET}" "${TLS_MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}" "${MAIL_FROM}"
+  "${KEYCLOAK_CLIENT_SECRET}" "${KEYCLOAK_ADMIN_CLIENT_SECRET}" "${TLS_MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}" "${MAIL_FROM}" \
+  "${PROFILE}" "${ADMIN_EMAIL}" "${ADMIN_PASSWORD}"
 
 sed \
   -e "s|crm_sign_access|${S3_SIGN_ACCESS_KEY}|g" \
@@ -188,6 +217,10 @@ chmod 755 "${RUNTIME}" "${RUNTIME}/keycloak" "${RUNTIME}/seaweedfs"
 chmod 644 "${RUNTIME}/keycloak/realm-crm.json" "${RUNTIME}/seaweedfs/s3.json"
 
 # Самопроверка: демо-секретов в сгенерированных файлах остаться не должно.
+if [[ "${PROFILE}" == prod ]] && grep -qE '"(admin\.crm|admin\.volkov|head\.petrov|kam\.ivanov|auditor\.smirnov)"|Admin12345678!' "${RUNTIME}/keycloak/realm-crm.json"; then
+  echo "ОШИБКА: в realm prod остались демо-пользователи" >&2
+  exit 1
+fi
 if grep -qE "crm-bff-secret|crm-admin-secret|crm_secret_key|crm_access|change-me-in-prod" \
      "${ENV_FILE}" "${RUNTIME}/keycloak/realm-crm.json" "${RUNTIME}/seaweedfs/s3.json"; then
   echo "ОШИБКА: в сгенерированных файлах остались демо-секреты" >&2
@@ -199,8 +232,22 @@ echo "  ${ENV_FILE}"
 echo "  ${RUNTIME}/keycloak/realm-crm.json"
 echo "  ${RUNTIME}/seaweedfs/s3.json"
 echo
-echo "ВНИМАНИЕ: демо-пользователи realm (Admin12345678!, Kam123456789!, …) остались."
-echo "Удалите их или смените пароли в консоли Keycloak до открытия доступа извне."
+if [[ "${PROFILE}" == prod ]]; then
+  echo
+  echo "################################################################"
+  echo "#  ПЕРВЫЙ АДМИНИСТРАТОР CRM (запишите, пароль временный)"
+  echo "#    адрес входа: ${RTK_BASE_URL}"
+  echo "#    логин:       admin   (или ${ADMIN_EMAIL})"
+  echo "#    пароль:      ${ADMIN_PASSWORD}"
+  echo "#  При первом входе Keycloak потребует задать новый пароль."
+  echo "#  Копия в ${ENV_FILE} (CRM_ADMIN_INITIAL_PASSWORD) после смены пароля неактуальна — удалите строку."
+  echo "################################################################"
+  echo
+  echo "Демо-пользователей в realm prod нет. Остальных пользователей заводит администратор в CRM (приглашение)."
+else
+  echo "ВНИМАНИЕ: демо-пользователи realm (Admin12345678!, Kam123456789!, …) — только для демо-стенда."
+  echo "Не открывайте такой стенд в интернет; для боевого использования: --profile prod."
+fi
 echo "Пароль администратора Keycloak сохранён в ${ENV_FILE} (KEYCLOAK_ADMIN_PASSWORD)."
 echo "Пароль администратора Grafana (профиль monitoring) — там же, GRAFANA_ADMIN_PASSWORD."
 if [[ "${MAIL}" == on ]]; then
