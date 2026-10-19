@@ -187,6 +187,31 @@ $(VAR)-подстановку в поле `value:` только для пере�
   value: {{ .Values.env.smtpFrom | quote }}
 - name: SMTP_STARTTLS
   value: {{ .Values.env.smtpStarttls | quote }}
+# backend#62 (P1/P2): шифрование ПДн учащегося, полный /health/details, забор у сайта и LMS, API-ключи.
+- name: FIELD_ENCRYPTION_KEY
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: field-encryption-key } }
+- name: FIELD_ENCRYPTION_KEY_PREV
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: field-encryption-key-prev } }
+- name: HEALTH_DETAILS_TOKEN
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: health-details-token } }
+- name: CMS_BASE_URL
+  value: {{ .Values.env.cmsBaseURL | quote }}
+- name: CMS_AUTH_REF
+  value: {{ .Values.env.cmsAuthRef | quote }}
+- name: CMS_AUTH_TOKEN
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: cms-auth-token } }
+- name: LMS_AUTH_TOKEN
+  valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: lms-auth-token } }
+- name: INTEGRATION_PULL_PAGE_SIZE
+  value: {{ .Values.env.integrationPullPageSize | quote }}
+- name: INTEGRATION_PULL_MAX_PAGES
+  value: {{ .Values.env.integrationPullMaxPages | quote }}
+- name: API_KEYS_ENABLED
+  value: {{ .Values.env.apiKeysEnabled | quote }}
+- name: API_KEY_DEFAULT_TTL_DAYS
+  value: {{ .Values.env.apiKeyDefaultTtlDays | quote }}
+- name: DEMO_LOCKED_PASSWORD_EMAILS
+  value: {{ .Values.env.demoLockedPasswordEmails | quote }}
 {{- end -}}
 
 {{/*

@@ -259,6 +259,14 @@ env:
   smtpUser: ""
   smtpFrom: ""
   smtpStarttls: "true"
+  # backend#62: забор по API у сайта (CMS) и LMS, API-ключи роли INTEGRATION, демо-учётки без смены пароля.
+  cmsBaseURL: ""
+  cmsAuthRef: ""
+  integrationPullPageSize: "100"
+  integrationPullMaxPages: "20"
+  apiKeysEnabled: "true"
+  apiKeyDefaultTtlDays: "90"
+  demoLockedPasswordEmails: ""
 
   # Grafana (monitoring.enabled) — GF_SECURITY_ADMIN_USER; пароль отдельно, в secrets ниже.
   grafanaAdminUser: admin
@@ -290,3 +298,10 @@ secrets:
   auditHmacKey: ""
   settingsEncryptionKey: ""
   smtpPassword: ""
+  # backend#62: Fernet-ключи шифрования ПДн учащегося (пусто — поля не шифруются), токен полного
+  # /health/details, токены забора у сайта и LMS.
+  fieldEncryptionKey: ""
+  fieldEncryptionKeyPrev: ""
+  healthDetailsToken: ""
+  cmsAuthToken: ""
+  lmsAuthToken: ""

@@ -84,6 +84,24 @@ x-api-env: &api-env
   SMTP_FROM: ${SMTP_FROM:-}
   SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
   SIGNATURE_EXPOSE_DEBUG_OTP: ${SIGNATURE_EXPOSE_DEBUG_OTP:-}
+  # Синхронизация с backend/docker-compose.yml после backend#62 (P1/P2): без этих строк
+  # переменные из .env не долетают до api/worker (whitelist, а не .env целиком).
+  # B6-7/B6-8: Fernet-ключ полей ПДн учащегося и токен полного /health/details.
+  FIELD_ENCRYPTION_KEY: ${FIELD_ENCRYPTION_KEY:-}
+  FIELD_ENCRYPTION_KEY_PREV: ${FIELD_ENCRYPTION_KEY_PREV:-}
+  HEALTH_DETAILS_TOKEN: ${HEALTH_DETAILS_TOKEN:-}
+  # B5-1: забор по API у сайта и LMS.
+  CMS_BASE_URL: ${CMS_BASE_URL:-}
+  CMS_AUTH_REF: ${CMS_AUTH_REF:-}
+  CMS_AUTH_TOKEN: ${CMS_AUTH_TOKEN:-}
+  LMS_AUTH_TOKEN: ${LMS_AUTH_TOKEN:-}
+  INTEGRATION_PULL_PAGE_SIZE: ${INTEGRATION_PULL_PAGE_SIZE:-100}
+  INTEGRATION_PULL_MAX_PAGES: ${INTEGRATION_PULL_MAX_PAGES:-20}
+  # B5-10: API-ключи для роли INTEGRATION (X-API-Key).
+  API_KEYS_ENABLED: ${API_KEYS_ENABLED:-true}
+  API_KEY_DEFAULT_TTL_DAYS: ${API_KEY_DEFAULT_TTL_DAYS:-90}
+  # B4-13: общие демо-учётки, которым нельзя менять пароль (действует только в demo).
+  DEMO_LOCKED_PASSWORD_EMAILS: ${DEMO_LOCKED_PASSWORD_EMAILS:-}
 
 services:
   postgres:
