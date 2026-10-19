@@ -211,6 +211,23 @@ docker compose -p rtk-demo -f compose/docker-compose.yml --env-file /srv/rtk-dem
 - **Сменить адрес** (`set_host.sh`) — `SMTP_FROM` следует за новым хостом сам.
 - **Несколько узлов (HA).** Если Mailpit на каждом узле хранит письма в своём томе, они лежат на том узле, чей `api`/`worker` их отправил, и после смены лидера не видны; чтобы письма пережили failover, `MAILPIT_DATABASE` указывают на кластер rqlite (`docs/ha-patroni.md`, «Mailpit на rqlite»: rqlite на трёх узлах, в `.env` каждого узла адрес его же rqlite). Ловушка годится только для демо; для боевой почты — реальный релей в `SMTP_*` на каждом узле. Переменные в `compose/.env` на всех узлах: `SMTP_HOST`, `SMTP_PORT`, `SMTP_STARTTLS`, `SMTP_FROM` (для Mailpit ещё `COMPOSE_PROFILES`, `MAILPIT_UI`, `MAILPIT_MAX_MESSAGES`, для HA — `MAILPIT_DATABASE`, отличается по узлам).
 
+### Письма Keycloak: русская тема и ссылки
+
+Письма Keycloak («забыли пароль» со страницы входа, подтверждение почты, `executeActions` из консоли, проверка SMTP) выглядят как письма CRM благодаря email-теме `rtk-crm` (`compose/keycloak/themes/rtk-crm`, копия `backend/deploy/keycloak/themes/rtk-crm`; в чарте — ConfigMap `keycloak-email-theme`, в бандле — каталог `compose/keycloak`). Язык писем всегда русский: в realm оставлен один язык (`supportedLocales: ["ru"]`), поэтому браузер с английским интерфейсом его не меняет. Приглашение и админский сброс пароля шлёт сам backend, не Keycloak.
+
+**Новая установка.** Ничего делать не нужно: тему выбирает импорт realm (`emailTheme: rtk-crm`).
+
+**Стенд, поставленный раньше.** Realm заново не импортируется, поэтому после обновления compose (том с темой появляется вместе с ним) тему выбирают в realm отдельно. `install.sh` поверх существующей установки и `scripts/deploy.sh` делают это сами (идемпотентно, выбранную вручную чужую тему не затирают); вручную:
+
+```bash
+bash scripts/kc_apply_email_theme.sh                       # compose/.env, проект по умолчанию
+bash scripts/kc_apply_email_theme.sh --container <имя контейнера keycloak>   # без compose (узел HA и т. п.)
+```
+
+Скрипт выполняет `kcadm.sh update realms/crm -s emailTheme=rtk-crm -s 'supportedLocales=["ru"]' -s defaultLocale=ru` внутри контейнера (учётка администратора берётся из его окружения). В Kubernetes то же самое: `kubectl exec deploy/keycloak -- /opt/keycloak/bin/kcadm.sh …` после `kcadm.sh config credentials --server http://localhost:8080/auth --realm master`. Или в консоли: Realm settings, Themes, Email theme = `rtk-crm`; Localization, оставить только русский. Keycloak кэширует темы: после правки файлов темы контейнер нужно перезапустить.
+
+**Хост ссылок.** Ссылки в письмах и `iss` токенов строятся из `KC_HOSTNAME` (публичный адрес с `/auth`, из `KEYCLOAK_PUBLIC_URL`) при `KC_HOSTNAME_BACKCHANNEL_DYNAMIC=true`: api по-прежнему ходит в Keycloak по внутреннему `http://keycloak:8080/auth`. Прежний `KC_HOSTNAME_URL` в Keycloak 25 не действует (hostname v1), из-за чего письма вели на `keycloak:8080`. Проверка после обновления: `curl -s https://<хост>/auth/realms/crm/.well-known/openid-configuration` — `issuer` и `authorization_endpoint` с публичным адресом, а запрос к тому же адресу из контейнера api (`http://keycloak:8080/auth/...`) даёт тот же `issuer`.
+
 ### Диск и SeaweedFS
 
 Без флага `-master.volumePreallocate=false` SeaweedFS резервировал на диске весь `volumeSizeLimitMB` при создании тома (1 ГБ на том, по 7 томов на бакет): пустой стенд занимал 20–36 ГБ, а два-три стенда на VM в 69 ГБ приводили к `No space left on device` и 500 в API. Флаг добавлен в compose и Helm-чарт, место теперь выделяется по мере роста данных (проверено: 35 томов занимают 308 КБ вместо 36 ГБ). **На уже работающих стендах** пересоздание контейнера освободит место не сразу: уже созданные `.dat` остаются предвыделенными. Для демо-стенда проще пересоздать том SeaweedFS (`docker compose down`, `docker volume rm <проект>_seaweed_data`, `up -d`, затем `bash scripts/seed_demo.sh`; загруженные файлы пропадут), для боевого нужен перенос данных.

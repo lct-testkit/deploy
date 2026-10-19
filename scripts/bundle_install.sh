@@ -416,6 +416,14 @@ done
 docker compose -f compose/docker-compose.yml --env-file compose/.env --env-file compose/.env.images \
   "${compose_profile_args[@]}" up -d --wait --wait-timeout 300 --pull never
 
+# Обновление установленного стенда: realm уже в БД Keycloak и заново не импортируется, поэтому русскую email-тему
+# выбираем в нём отдельно (у новой установки её приносит импорт realm). Не критично для работы системы: при сбое
+# только предупреждаем.
+if [[ "${EXISTING_ENV}" == 1 ]]; then
+  bash scripts/kc_apply_email_theme.sh --env-file compose/.env --images-env compose/.env.images \
+    || echo "ПРЕДУПРЕЖДЕНИЕ: email-тема rtk-crm не подключена к realm (см. сообщение выше). Письма Keycloak останутся стандартными; подключить: bash scripts/kc_apply_email_theme.sh" >&2
+fi
+
 echo "== 5/6 smoke =="
 LOCAL_HTTP_PORT="$(grep -E '^HTTP_PORT=' compose/.env | cut -d= -f2)"
 bash scripts/smoke.sh "http://localhost:${LOCAL_HTTP_PORT}"
