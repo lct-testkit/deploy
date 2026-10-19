@@ -16,7 +16,8 @@ RUN apk update && apk upgrade --no-cache
 # node_modules). Зовём node на реальный entry point напрямую.
 # Из deps берём только prism. npm и corepack базового образа рантайму не нужны, а их транзитивные
 # зависимости (brace-expansion, undici) — источник CVE в сканах: удаляем.
-RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \n    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
 COPY --from=deps /usr/local/lib/node_modules/@stoplight /usr/local/lib/node_modules/@stoplight
 COPY openapi.yaml /openapi.yaml
 
