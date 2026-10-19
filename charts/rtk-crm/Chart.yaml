@@ -7,6 +7,8 @@ description: >-
   образы api/web тянутся готовыми из ghcr.io/lct-testkit/* вместо локальной
   сборки — см. ../../images.yaml.
 type: application
+annotations:
+  artifacthub.io/license: Apache-2.0
 version: 0.1.0
 appVersion: "1.0.0"
 keywords:

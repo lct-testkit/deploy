@@ -71,3 +71,7 @@ bash scripts/e2e_stack.sh --with-restore     # нужен docker login ghcr.io; 
 
 Статические проверки гоняются в CI (`validate.yml`) на каждый PR; e2e — на PR, затрагивающие
 `compose/`, `scripts/`, `images.yaml`, а также ночью.
+
+## Лицензия
+
+Apache-2.0 — файл [`LICENSE`](LICENSE). Материалы третьих лиц (шрифт Rostelecom Basis, товарные знаки и фирменные ассеты Ростелекома, сторонние зависимости) в лицензию не входят — [`NOTICE`](NOTICE).

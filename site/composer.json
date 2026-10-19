@@ -3,7 +3,7 @@
     "name": "rtk-school/site",
     "type": "project",
     "description": "Сайт ИТ-Школы РТК: лендинг, форма заявки и API выдачи заявок для CRM.",
-    "license": "proprietary",
+    "license": "Apache-2.0",
     "require": {
         "php": "^8.3",
         "laravel/framework": "^12.0"
