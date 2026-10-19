@@ -1,0 +1,5 @@
+[
+  {"username": "mailpit", "password": "<пароль Mailpit, 32+ символа из [A-Za-z0-9]>", "perms": ["query", "execute", "status"]},
+  {"username": "cluster", "password": "<пароль узлов друг с другом>", "perms": ["join", "notify"]},
+  {"username": "admin", "password": "<пароль оператора>", "perms": ["all"]}
+]

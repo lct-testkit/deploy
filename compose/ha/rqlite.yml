@@ -1,0 +1,51 @@
+# rqlite — хранилище писем Mailpit в HA-развёртывании (docs/ha-patroni.md). Отдельный compose-проект
+# `rtk-rqlite` в /opt/rqlite на КАЖДОМ из трёх узлов, поднимается всегда (как etcd и SeaweedFS), а не только на
+# лидере Patroni: иначе нет кворума, и после смены лидера письма пропали бы. Рядом с основным стеком `rtk-crm`
+# не живёт — его `docker compose stop` на реплике rqlite не трогает.
+#
+#   cd /opt/rqlite && docker compose --env-file .env up -d
+#
+# .env (пример — rqlite.env.example): NODE_ID, NODE_IP (WireGuard-адрес узла), RQLITE_PEERS, RQLITE_IMAGE.
+# Слушает только WireGuard-адрес узла: HTTP 4001 (клиенты), Raft 4002 (кластер). Доступ по HTTP — только с
+# логином/паролем из файла пользователей (ha/rqlite-auth.example.json), сеть между узлами общая.
+name: rtk-rqlite
+
+services:
+  rqlite:
+    image: ${RQLITE_IMAGE:?впишите RQLITE_IMAGE из .env.images основного стека}
+    restart: unless-stopped
+    # host-сеть: адреса WG-интерфейса видны контейнеру как есть, прокси docker-proxy не нужен.
+    network_mode: host
+    environment:
+      NODE_ID: ${NODE_ID:?имя узла, например n1}
+      HTTP_ADDR: ${NODE_IP:?WG-адрес узла}:4001
+      HTTP_ADV_ADDR: ${NODE_IP}:4001
+      RAFT_ADDR: ${NODE_IP}:4002
+      RAFT_ADV_ADDR: ${NODE_IP}:4002
+    # Опции, начинающиеся с «-», entrypoint образа достраивает адресами выше и каталогом данных.
+    # -bootstrap-expect 3 + список Raft-адресов: кластер собирается сам, когда поднялись все три узла;
+    # уже собранный кластер при перезапуске узла просто возвращается в него из сохранённого состояния.
+    command:
+      - -auth=/config/auth.json
+      # Узлы входят в кластер и сообщают о готовности от имени служебного пользователя cluster (права join, notify).
+      - -join-as=cluster
+      - -bootstrap-expect=3
+      - -join=${RQLITE_PEERS:?Raft-адреса трёх узлов через запятую}
+    volumes:
+      - ${RQLITE_DATA_DIR:-/srv/rqlite}:/rqlite/file
+      - ${RQLITE_AUTH_FILE:-./auth.json}:/config/auth.json:ro
+    healthcheck:
+      # /readyz требует пароль, как и весь HTTP API, поэтому проверяем только что порт слушает.
+      # Готовность кластера — `curl -u admin:… http://10.10.0.X:4001/readyz` (docs/ha-patroni.md).
+      test: ["CMD-SHELL", "nc -z ${NODE_IP} 4001 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
