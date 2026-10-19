@@ -35,6 +35,15 @@ images:
     dockerfile: Dockerfile
     tag: "sha-afed966"
     digest: "sha256:b10a72ffcc433cfb4b51184c82b3ae57af854fdfc3e94731b2c74f9261f74cfd"
+  # Сайт школы на Laravel (профиль compose `site`). optional: пока образ не опубликован build.yml, SITE_IMAGE
+  # указывает на локальный тег rtk-site:local (compose build:), а не блокирует деплой всего стека.
+  site:
+    repo: deploy
+    context: site
+    dockerfile: Dockerfile
+    optional: true
+    tag: ""
+    digest: ""
   mock-cms:
     repo: deploy
     context: mocks/cms
@@ -54,6 +63,7 @@ services:
   web: web
   mock-lms: mock-lms
   mock-cms: mock-cms
+  site: site
 
 # Внешние образы. Тоже попадают в офлайн-бандл, поэтому
 # пиним по digest, а не только по тегу — иначе "тот же тег" на чистой
@@ -141,6 +151,8 @@ profiles:
   integrations:
     - mock-lms
     - mock-cms
+  site:
+    - site
   registry:
     - local-registry
   demo-data:

@@ -12,7 +12,7 @@
 | публикация образов (`docker-publish.yml`) | self-hosted | multi-arch: linux/amd64 (эмуляция QEMU) + linux/arm64 (нативно); Trivy по каждой платформе; подпись cosign |
 | `notify` (запись tag/digest в `images.yaml`) | self-hosted | до записи проверяет платформы образа (`REQUIRE_ARCHES`) и поднимает стек из образов |
 | `e2e / stack` (up → smoke → бэкап → восстановление) | self-hosted | у каждого прогона свой compose-проект и свободные порты (`E2E_PROJECT`, `E2E_PORT_OFFSET=auto`) |
-| `build.yml` (образы моков) | `ubuntu-latest` | не мигрирован — редкие триггеры (только изменения в `mocks/**` или ручной запуск), последний прогон 25.09.2026 успешен, но это было ДО отключения биллинга; при нынешнем биллинге упадёт как любой другой `ubuntu-latest`-джоб (см. первый абзац) — не проверено намеренно, чтобы не публиковать мок-образы без нужды |
+| `build.yml` (образы моков и сайта `site`) | self-hosted | по образцу `docker-publish.yml`: multi-arch (amd64 через QEMU + arm64), Trivy по каждой платформе до push, проверка платформ в GHCR, cosign; триггеры — `mocks/**`, `site/**`, ручной запуск. Образ `site` собирается с BuildKit-секретом `npm_token` (приватный пакет rt-ui из GitHub Packages) |
 | `e2e / offline-bundle` (установка без сети) | `ubuntu-latest` | режет сеть iptables и делает `docker system prune` — на общем демоне недопустимо; сейчас не выполняется |
 | ночная нагрузка backend (`loadtest.yml`) | приостановлена | 50 RPS на 2 vCPU с девятью раннерами измерили бы раннер, а не код; запуск вручную на стенде |
 

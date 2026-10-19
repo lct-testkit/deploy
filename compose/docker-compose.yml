@@ -11,7 +11,7 @@
 #   docker compose --env-file .env --env-file .env.images up -d
 #
 # Профили: без флага — весь боевой стек (включая web); `integrations` —
-# mock-lms/mock-cms; `registry` — внутренний registry контура; `demo-data` —
+# mock-lms/mock-cms; `site` — сайт школы на Laravel (site/, источник заявок для CRM вместо mock-cms); `registry` — внутренний registry контура; `demo-data` —
 # моковые данные демо-стенда (scripts/seed_demo.sh); `monitoring` — Prometheus + Grafana
 # (scripts/bundle_install.sh --monitoring), дашборды за Caddy на /grafana; `mail` — Mailpit
 # (ловушка писем демо-стенда, интерфейс за Caddy на /mail; для demo включён по умолчанию).
@@ -65,12 +65,16 @@ x-api-env: &api-env
   # тем же числом в Service/healthcheck воркера — поменяли порт здесь, поправьте и там.
   WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9101}
   CMS_WEBHOOK_SECRET_REF: ${CMS_WEBHOOK_SECRET_REF:-}
+  # Забор заявок с сайта по API (профиль `site`, см. docs/site.md): адрес сайта и ссылка на переменную с Bearer-токеном.
+  CMS_BASE_URL: ${CMS_BASE_URL:-}
+  CMS_AUTH_REF: ${CMS_AUTH_REF:-CMS_AUTH_TOKEN}
   LMS_BASE_URL: ${LMS_BASE_URL:-}
   LMS_AUTH_REF: ${LMS_AUTH_REF:-}
   BITRIX_CONNECTOR_ENABLED: ${BITRIX_CONNECTOR_ENABLED:-false}
   BITRIX_WEBHOOK_URL_REF: ${BITRIX_WEBHOOK_URL_REF:-}
   INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN: ${INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN:-60}
   CMS_WEBHOOK_SECRET: ${CMS_WEBHOOK_SECRET:-}
+  CMS_AUTH_TOKEN: ${CMS_AUTH_TOKEN:-}
   BITRIX_WEBHOOK_URL: ${BITRIX_WEBHOOK_URL:-}
   BITRIX_SOURCE_ID: ${BITRIX_SOURCE_ID:-OTHER}
   ALLOWED_FILE_EXTENSIONS: ${ALLOWED_FILE_EXTENSIONS:-png,jpeg,jpg,pdf,zip,gz,gzip,rar,doc,docx,xls,xlsx,xml,csv,json}
@@ -408,6 +412,11 @@ services:
       S3_TLS_SNIPPET: ${S3_TLS_SNIPPET:-tls_none}
       # Маршрут /mail (Mailpit, профиль mail), только чтение: public — всем (demo), crm — вошедшим в CRM, пусто — 404.
       MAILPIT_UI: ${MAILPIT_UI:-}
+      # Отдельные сайты по имени хоста (SITE_HOST — сайт школы, LMS_HOST — mock-lms). Пусто — блока нет, остаётся путь /site.
+      # Значение — адрес(а) через запятую с хвостом «, »; Caddyfile дописывает к нему заведомо недоступный http-адрес,
+      # чтобы ключ блока не был пустым (пустой ключ Caddy не принимает).
+      SITE_ADDRESSES: ${SITE_HOST:+${SITE_HOST}:${CRM_TLS_PORT:-8443}, }
+      LMS_ADDRESSES: ${LMS_HOST:+${LMS_HOST}:${CRM_TLS_PORT:-8443}, }
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -470,6 +479,42 @@ services:
     profiles: ["integrations"]
     image: ${MOCK_CMS_IMAGE:?выполните scripts/render_env_images.py}
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+    networks: [crm]
+
+  # Сайт ИТ-Школы РТК (Laravel, site/): лендинг, форма заявки и API GET /api/v1/leads, которое опрашивает CRM
+  # (источник cms; профиль compose `site`: docker compose --profile site up -d). Отдельная БД `site` и роль `site`
+  # создаются самим контейнером при старте (нужна учётка администратора PostgreSQL), миграции — там же.
+  # Под Caddy сайт доступен на /site (или на отдельном имени хоста SITE_HOST), внутри сети compose — http://site:8080.
+  # В HA (Patroni) postgres в compose не используется: SITE_DB_HOST=patroni-db (имя резолвится через host-gateway).
+  site:
+    profiles: ["site"]
+    image: ${SITE_IMAGE:?выполните scripts/render_env_images.py}
+    # Локальная сборка вместо готового образа: docker compose --profile site up --build site (нужен токен rt-ui, см. site/README.md).
+    build:
+      context: ../site
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      APP_DEBUG: "false"
+      APP_KEY: ${SITE_APP_KEY:-}
+      APP_URL: ${BASE_URL:-http://localhost:8080}/site
+      DB_HOST: ${SITE_DB_HOST:-postgres}
+      DB_PORT: ${SITE_DB_PORT:-5432}
+      DB_DATABASE: ${SITE_DB_NAME:-site}
+      DB_USERNAME: ${SITE_DB_USER:-site}
+      DB_PASSWORD: ${SITE_DB_PASSWORD:-site}
+      SITE_DB_ADMIN_USER: ${SITE_DB_ADMIN_USER:-${POSTGRES_USER:-crm}}
+      SITE_DB_ADMIN_PASSWORD: ${SITE_DB_ADMIN_PASSWORD:-${POSTGRES_PASSWORD:-crm}}
+      SITE_API_TOKEN: ${CMS_AUTH_TOKEN:-}
+      SITE_SEED_DEMO: ${SITE_SEED_DEMO:-false}
+      SITE_LOGIN_URL: ${SITE_LOGIN_URL:-/}
+      SESSION_SECURE_COOKIE: ${SITE_SECURE_COOKIES:-}
+    extra_hosts:
+      - "patroni-db:host-gateway"
+    # depends_on postgres нет намеренно: в HA контейнер postgres подменён, а entrypoint сайта сам ждёт БД (до ~3 минут).
     security_opt:
       - no-new-privileges:true
     logging: *logging

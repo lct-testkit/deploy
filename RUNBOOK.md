@@ -30,7 +30,15 @@ main → те же гейты, затем публикация образа:
 | **Офлайн-бандл** | Закрытый контур без интернета | `scripts/build_offline_bundle.sh` → `install.sh` |
 | **Helm / Kubernetes** | Уже есть кластер и вы хотите катить это в него как обычное приложение | `charts/rtk-crm/` |
 
-Все описывают ОДНУ систему: Caddy, API, worker, миграции/сиды как одноразовые задачи, Keycloak, PostgreSQL, Redis, SeaweedFS, NTP, мок SMS-шлюза, веб-клиент (профиль `integrations` добавляет mock-lms/mock-cms, профиль `registry` — внутренний registry).
+Все описывают ОДНУ систему: Caddy, API, worker, миграции/сиды как одноразовые задачи, Keycloak, PostgreSQL, Redis, SeaweedFS, NTP, мок SMS-шлюза, веб-клиент (профиль `integrations` добавляет mock-lms/mock-cms, профиль `site` — сайт школы на Laravel `site`, источник заявок для CRM вместо mock-cms, профиль `registry` — внутренний registry).
+
+## Сайт школы (профиль `site`)
+
+Сайт на Laravel — источник заявок по API для CRM (ТЗ: «LMS и веб-сайт на CMS Laravel»). Включение:
+`docker compose --profile site up -d` (образ `site`, БД `site` и роль создаются при старте), маршрут Caddy `/site`, отдельные
+имена хостов — `SITE_HOST`/`LMS_HOST` в `.env` (пусто — только путь). Связка с CRM — `CMS_BASE_URL` + `CMS_AUTH_TOKEN`
+(gen_env.sh создаёт токен), включение источника `cms` и «Забрать сейчас» — в [`docs/site.md`](docs/site.md). В `APP_PROFILE=prod`
+`CMS_BASE_URL` должен быть публичным (`https://<хост>/site`): адрес из приватной сети compose CRM отклоняет.
 
 ## Провижининг VM
 

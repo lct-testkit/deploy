@@ -1,0 +1,23 @@
+/* Rostelecom Basis — the font is licensed by Rostelecom and lives in static/fonts (git-ignored, provided by the customer).
+   Fallback stack (--atmr-font-family-body) keeps the UI readable without it. */
+@font-face {
+	font-family: 'Rostelecom Basis';
+	src: url('/fonts/RostelecomBasis-Regular.woff') format('woff');
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Rostelecom Basis';
+	src: url('/fonts/RostelecomBasis-Medium.woff') format('woff');
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Rostelecom Basis';
+	src: url('/fonts/RostelecomBasis-Bold.woff') format('woff');
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+}

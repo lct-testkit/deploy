@@ -242,6 +242,10 @@ env:
   # x-api-env backend/docker-compose.yml (`${VAR:-}`).
   cmsWebhookSecretRef: ""
   cmsWebhookSecret: ""
+  # Забор заявок с сайта по API (сайт на Laravel в чарт не входит — только compose, профиль site): адрес и токен.
+  cmsBaseURL: ""
+  cmsAuthRef: CMS_AUTH_TOKEN
+  cmsAuthToken: ""
   lmsBaseURL: ""
   lmsAuthRef: ""
   bitrixConnectorEnabled: "false"
