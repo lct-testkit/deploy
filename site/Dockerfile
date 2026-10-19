@@ -41,6 +41,9 @@ RUN composer dump-autoload --no-dev --classmap-authoritative --no-interaction --
 
 FROM php:8.3-fpm-alpine@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS base
 # Патчи alpine на дату сборки (база не всегда содержит свежие security-фиксы своей ветки).
+# Версии apk не пинуем: образ базы закреплён digest-ом, а `apk upgrade` намеренно берёт свежие фиксы ветки;
+# $PHPIZE_DEPS — список пакетов, разбиение на слова здесь и нужно.
+# hadolint ignore=DL3018,SC2086
 RUN set -eux; \
     apk upgrade --no-cache; \
     apk add --no-cache nginx libpq; \
