@@ -25,8 +25,7 @@
 #   --registry     поднять внутренний registry (localhost:5000) и залить в него образы
 #   --monitoring   поднять Prometheus + Grafana (дашборды по метрикам API на /grafana, профиль compose
 #                  `monitoring`); по умолчанию не поднимается
-#   --mail         поднять Mailpit — ловушку писем (интерфейс на /mail, логин mail, пароль — MAILPIT_UI_PASSWORD в
-#                  compose/.env): SMTP api/worker и Keycloak указываются на неё, письма наружу не уходят. Для demo
+#   --mail         поднять Mailpit — ловушку писем (интерфейс на /mail, только чтение: demo — всем, prod — после входа в CRM): SMTP api/worker и Keycloak указываются на неё, письма наружу не уходят. Для demo
 #                  включено по умолчанию, для prod — нет (там SMTP_* настраивают под реальный релей)
 #   --no-mail      demo без Mailpit: SMTP_* остаются пустыми (письма не уходят)
 #   --no-start     только проверить, загрузить образы и создать .env, стек не запускать
@@ -441,7 +440,7 @@ if [[ "${WITH_MONITORING}" == 1 ]]; then
   echo "   Grafana: ${FINAL_URL}/grafana/ (логин — GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD в compose/.env)"
 fi
 if [[ ",${env_profiles}," == *,mail,* ]]; then
-  echo "   Почта (Mailpit, все письма системы): ${FINAL_URL}/mail/ (логин mail, пароль — MAILPIT_UI_PASSWORD в compose/.env)"
+  echo "   Почта (Mailpit, все письма системы): ${FINAL_URL}/mail/ (только чтение)"
 fi
 if [[ "${PROFILE}" == demo ]]; then
   echo "   вход: на экране входа выберите демо-учётку (администратор, руководитель, менеджер, аудитор)"

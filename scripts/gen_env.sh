@@ -9,8 +9,8 @@
 #            internal: HTTPS на 443 с самоподписанным сертификатом Caddy (закрытый контур, IP, внутренние имена);
 #            acme: HTTPS на 443 с сертификатом Let's Encrypt (публичный домен, DNS на этот сервер, порты 80/443 из интернета).
 #            internal и acme требуют --host и несовместимы с --port-offset (порты 80/443/8333 фиксированы).
-#   --mail   on|off: Mailpit — ловушка писем (профиль compose `mail`, интерфейс на /mail под логином mail и случайным паролем
-#            MAILPIT_UI_PASSWORD из .env). on: SMTP api/worker и Keycloak указывают на mailpit, COMPOSE_PROFILES=mail.
+#   --mail   on|off: Mailpit — ловушка писем (профиль compose `mail`, интерфейс на /mail только для чтения: demo —
+#            всем, prod — вошедшим в CRM). on: SMTP api/worker и Keycloak указывают на mailpit, COMPOSE_PROFILES=mail.
 #            По умолчанию: demo — on, prod — off (SMTP_* остаются пустыми и настраиваются под реальный релей).
 #   --fonts  каталог с *.woff шрифтов Rostelecom Basis (лицензионные, в образ web не входят): копируются в runtime/fonts.
 #
@@ -116,7 +116,6 @@ S3_SECRET_KEY="$(rand 40)"
 S3_SIGN_ACCESS_KEY="$(rand 20)"
 S3_SIGN_SECRET_KEY="$(rand 40)"
 CMS_WEBHOOK_SECRET="$(rand 40)"
-MAILPIT_UI_PASSWORD="$(rand 24)"
 
 cp "${EXAMPLE}" "${ENV_FILE}"
 
@@ -142,8 +141,8 @@ set_var CMS_WEBHOOK_SECRET "${CMS_WEBHOOK_SECRET}"
 # машине (dev/demo/prod) различаются смещением портов.
 rtk_apply_mode_env "${ENV_FILE}" "${TLS_MODE}" "${HOST}" "${PORT_OFFSET}"
 
-# Ловушка писем (Mailpit): SMTP api/worker, COMPOSE_PROFILES, логин/пароль интерфейса /mail.
-rtk_apply_mail_env "${ENV_FILE}" "${MAIL}" "${HOST}" "${MAILPIT_UI_PASSWORD}"
+# Ловушка писем (Mailpit): SMTP api/worker, COMPOSE_PROFILES, интерфейс /mail.
+rtk_apply_mail_env "${ENV_FILE}" "${MAIL}" "${HOST}"
 MAIL_FROM=""
 [[ "${MAIL}" == on ]] && MAIL_FROM="$(rtk_mail_from "${HOST}")"
 
@@ -198,7 +197,7 @@ echo "Удалите их или смените пароли в консоли K
 echo "Пароль администратора Keycloak сохранён в ${ENV_FILE} (KEYCLOAK_ADMIN_PASSWORD)."
 echo "Пароль администратора Grafana (профиль monitoring) — там же, GRAFANA_ADMIN_PASSWORD."
 if [[ "${MAIL}" == on ]]; then
-  echo "Почта (Mailpit, все письма системы): ${RTK_BASE_URL}/mail/ — логин mail, пароль в ${ENV_FILE} (MAILPIT_UI_PASSWORD)."
+  echo "Почта (Mailpit, все письма системы): ${RTK_BASE_URL}/mail/ (только чтение; MAILPIT_UI в ${ENV_FILE}: public — всем, crm — после входа в CRM)."
 else
   echo "Почта: SMTP_* в ${ENV_FILE} не заданы (письма не уходят). Ловушка писем: --mail on."
 fi
