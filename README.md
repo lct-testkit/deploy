@@ -29,6 +29,8 @@ Trivy → push → SBOM/provenance → подпись cosign), а `notify.yml` �
 | `compose/` сервис `mailpit` | Профиль compose `mail`: Mailpit — ловушка писем демо-стенда (приглашения, сброс пароля, ссылки подписантам, уведомления, письма Keycloak), интерфейс `/mail` за Caddy, только чтение (demo — всем, prod — после входа в CRM); для demo включён по умолчанию (`install.sh --no-mail` отключает) |
 | `scripts/render_env_images.py` | `images.yaml` → `.env.images` (режимы `digest` / `bundle` / `registry`) |
 | `scripts/gen_env.sh`, `lib_host.sh` | Секреты + согласованные `runtime/keycloak/realm-crm.json` и `runtime/seaweedfs/s3.json`; `--host`, `--tls off\|internal\|acme`, `--fonts`, `--port-offset`. `lib_host.sh` — общие функции адреса и режима TLS |
+| `scripts/kc_apply_email_theme.sh` | Выбор русской email-темы `rtk-crm` в realm Keycloak у уже установленного стенда (на новой установке тему выбирает импорт realm); вызывается из `install.sh` и `deploy.sh` |
+| `compose/ha/` | HA на трёх узлах: `rqlite.yml` — кластер rqlite для хранилища писем Mailpit (`MAILPIT_DATABASE`), отдельный compose-проект на каждом узле, не профиль основного compose |
 | `scripts/set_host.sh` | Смена адреса и режима TLS у установленного стенда: `.env`, realm, адреса клиента в БД Keycloak, перезапуск |
 | `scripts/deploy.sh` | Деплой окружения (`--init`, `rollback`): бэкап → `up --wait` → smoke → автооткат |
 | `scripts/smoke.sh`, `e2e_stack.sh` | Дымовая проверка и сквозной сценарий стенда (up → smoke → бэкап → восстановление) |
