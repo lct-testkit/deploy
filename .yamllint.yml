@@ -5,6 +5,10 @@ extends: default
 ignore: |
   charts/**/templates/
   .git/
+  # lock-файл пакетного менеджера генерируется, длинные строки в нём — норма
+  site/pnpm-lock.yaml
+  site/node_modules/
+  site/vendor/
 
 rules:
   line-length:
