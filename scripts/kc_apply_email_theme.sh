@@ -18,6 +18,8 @@
 #   - supportedLocales=["ru"], defaultLocale=ru, internationalizationEnabled=true: письмо «забыли пароль» всегда на
 #     русском, а не по языку браузера (Keycloak берёт язык письма из locale пользователя и Accept-Language, но только
 #     из числа supportedLocales);
+#   - срок ссылки «забыли пароль» actionTokenGeneratedByUserLifespan=900 (15 минут), только если сейчас дефолт 300
+#     или значение не задано: выставленное вручную не трогается;
 #   - если SMTP уже настроен, а имя отправителя пустое: fromDisplayName="РТК Школа CRM".
 # Идемпотентен: если у realm уже выбрана какая-то email-тема (в том числе чужая, заданная администратором), ничего
 # не меняет и говорит об этом; --force переопределяет. Чтобы Keycloak увидел новые файлы темы, контейнер должен
@@ -69,6 +71,13 @@ kc_exec "${LOGIN}" 2>/dev/null \
 
 state="$(kc_exec "${KCADM} get realms/crm ${CFG}" 2>/dev/null)" || die "realm crm не найден"
 smtp="$(printf '%s' "${state}" | sed -n '/"smtpServer"/,/}/p')"
+
+# Срок ссылки «забыли пароль»: дефолт Keycloak 300 с (5 минут) поднимаем до 900 (15 минут); заданное вручную
+# другое значение не трогаем.
+lifespan="$(printf '%s' "${state}" | sed -n 's/.*"actionTokenGeneratedByUserLifespan"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)"
+if [[ -z "${lifespan}" || "${lifespan}" == 300 ]]; then
+  kc_exec "${KCADM} update realms/crm ${CFG} -s actionTokenGeneratedByUserLifespan=900"     && echo "kc_apply_email_theme: срок ссылки «забыли пароль»: 15 минут"
+fi
 
 # Тема уже выбрана: своё не затираем.
 current="$(printf '%s' "${state}" | sed -n 's/.*"emailTheme"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
