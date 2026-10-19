@@ -523,6 +523,15 @@ services:
       SESSION_SECURE_COOKIE: ${SITE_SECURE_COOKIES:-}
     extra_hosts:
       - "patroni-db:host-gateway"
+    # Проверка здоровья задана здесь, а не только в образе (HEALTHCHECK в site/Dockerfile): без неё `up --wait` считает
+    # здоровым любой запущенный контейнер, даже если вместо сайта стартовал не тот образ (так это однажды и случилось).
+    # start_period с запасом: entrypoint ждёт БД и применяет миграции.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/up"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
     # depends_on postgres нет намеренно: в HA контейнер postgres подменён, а entrypoint сайта сам ждёт БД (до ~3 минут).
     security_opt:
       - no-new-privileges:true
