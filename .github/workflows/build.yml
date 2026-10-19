@@ -48,6 +48,8 @@ jobs:
           - image: site
             context: site
             npm-token: "true"
+            # Только x86_64: все узлы стенда amd64, а сборка pdo_pgsql под arm64 (QEMU/alpine) падает на autom4te.
+            platforms: linux/amd64
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
       # Пусто у образов без приватных npm-зависимостей: условие в secret-envs ниже тогда не передаёт секрет.
@@ -107,6 +109,7 @@ jobs:
           trivyignores: ${{ matrix.context }}/.trivyignore
 
       - name: Build linux/arm64 (в tar, для скана)
+        if: ${{ !matrix.platforms || contains(matrix.platforms, 'arm64') }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
@@ -119,6 +122,7 @@ jobs:
           secret-envs: ${{ env.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
 
       - name: Trivy linux/arm64 (CRITICAL/HIGH)
+        if: ${{ !matrix.platforms || contains(matrix.platforms, 'arm64') }}
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
           input: ${{ runner.temp }}/scan-arm64.tar
@@ -132,7 +136,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platforms || 'linux/amd64,linux/arm64' }}
           push: true
           provenance: mode=max
           sbom: true
@@ -182,6 +186,8 @@ jobs:
   update-manifest:
     name: обновить images.yaml
     needs: build
+    # Обновляет образы, которые собрались: упавший образ (например, мок на свежем CVE) не держит остальные.
+    if: ${{ !cancelled() }}
     runs-on: [self-hosted, lct]
     timeout-minutes: 15
     permissions:
