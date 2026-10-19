@@ -294,6 +294,14 @@
 	}
 }
 
+# Почта стенда по отдельному имени (MAIL_HOST, напр. mail.example.ru): переход на /mail/ основного адреса CRM —
+# сама почта живёт под CRM-хостом (в режиме MAILPIT_UI=crm ей нужна кука сессии этого хоста).
+{$MAIL_ADDRESSES}http://127.0.0.1:65532 {
+	import {$CRM_TLS_SNIPPET:tls_internal}
+	import host_headers
+	redir https://{$CRM_TLS_HOST:localhost}/mail/ 302
+}
+
 {$LMS_ADDRESSES}http://127.0.0.1:65531 {
 	import {$CRM_TLS_SNIPPET:tls_internal}
 	import host_headers
