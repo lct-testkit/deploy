@@ -24,6 +24,8 @@ main → те же гейты, затем публикация образа:
 
 ## Три пути деплоя
 
+В офлайн-бандл входят `install.sh`, `scripts/gen_env.sh`, `set_host.sh`, `smoke.sh`, `seed_demo.sh`, `backup.sh`, `restore_test.sh`, `registry_load.sh`, `kc_apply_email_theme.sh`, `render_env_images.py` (режим registry; нужны `python3` и PyYAML), `images.yaml`, `compose/`, `seed/`, `docs/site.md` и `docs/ha-patroni.md`. Онлайн-путь (`deploy.sh`, `provision_vm.sh`, `install_autodeploy.sh`), сборка бандла, `sync_seed.sh`, Helm-чарт и документы по GHCR/CI остаются в репозитории lct-testkit/deploy: бандлу они не нужны (список — `scripts/bundle_manifest.txt`, его сверяет `scripts/check_bundle_refs.sh`).
+
 | Путь | Когда | Каталог |
 |---|---|---|
 | **docker compose** (рекомендуется для одного сервера) | Один хост, systemd есть, самый короткий путь от нуля до работающего стенда | `compose/` |
@@ -104,13 +106,13 @@ RTK_ENV=dev scripts/deploy.sh              # обновить
 RTK_ENV=demo scripts/deploy.sh rollback    # вернуть образы предыдущего успешного деплоя
 ```
 
-**Важно:** миграции Alembic идут только вперёд. Откат образов не откатывает схему БД. Если новая ревизия успела применить необратимые миграции, восстановление — из бэкапа, снятого перед выкладкой (`/srv/rtk-<env>/backups/…`, путь печатает `deploy.sh`): сначала проверьте бэкап `scripts/restore_test.sh`, затем восстановите его в боевую БД (см. ниже).
+**Важно:** миграции Alembic идут только вперёд. Откат образов не откатывает схему БД. Если новая ревизия успела применить необратимые миграции, восстановление — из бэкапа, снятого перед выкладкой (`/srv/rtk-<env>/backups/…`, путь печатает `deploy.sh`): сначала проверьте бэкап `scripts/restore_test.sh`, затем восстановите его в боевую БД по разделу «Восстановление в боевой стенд» (ниже, после «Резервное копирование и восстановление»).
 
 Откат к произвольному коммиту `images.yaml`: `git -C <deploy> checkout <commit> -- images.yaml && RTK_ENV=… scripts/deploy.sh --no-pull`, потом `git checkout main -- images.yaml`, иначе следующий автодеплой перезапишет откат.
 
 ## Офлайн-установка (закрытый контур)
 
-Скринкаст: развёртка офлайн/онлайн в Proxmox, от чистой машины до работающего стенда — [vkvideo.ru](https://vkvideo.ru/video-241860435_456239018?list=ln-TGrbm0XClyNeuXUdsy) (полный список — [`docs/SCREENCASTS.md`](https://github.com/lct-testkit/.github/blob/main/docs/SCREENCASTS.md) в README организации).
+Скринкаст: развёртка офлайн/онлайн в Proxmox, от чистой машины до работающего стенда — [vkvideo.ru](https://vkvideo.ru/video-241860435_456239018?list=ln-TGrbm0XClyNeuXUdsy) (полный список — [список скринкастов](https://github.com/lct-testkit/.github/blob/main/docs/SCREENCASTS.md) в README организации).
 
 Каждый тег `vX.Y.Z` публикует в GitHub Releases бандл со ВСЕМИ образами, compose, скриптами и `SHA256SUMS`. Штатный релиз выходит только если e2e зелёный, включая **установку бандла на машине без сети** (`.github/workflows/e2e.yml`, job `offline-bundle` на GitHub-hosted раннере). Пока у организации нет GitHub-hosted раннеров, релиз собирается вручную на self-hosted раннере с `skip_offline_e2e=true` (`docs/ci-self-hosted.md`): тогда установку без сети проверяют вручную перед выдачей.
 
@@ -262,6 +264,29 @@ bash scripts/restore_test.sh --backup /srv/rtk-demo/backups/<каталог> \
 
 Поднимает чистый изолированный стенд (проект `rtk-restore-test`, порты 18080/…), восстанавливает базы, сверяет число строк (в каждой таблице не меньше, чем было до дампа), поднимает весь стек и гоняет smoke. Ночью то же делает `e2e.yml`. Целевые RTO 4 ч, RPO 15 мин (спека §6): дневной `pg_dump` даёт RPO сутки — для 15 минут добавьте WAL-архивирование (в этом репозитории не реализовано).
 
+### Восстановление в боевой стенд
+
+`restore_test.sh` проверяет бэкап на отдельном стенде и боевые данные не трогает. Когда нужно вернуть сам боевой стенд (порча данных, неудачная миграция), порядок такой; все команды — из каталога установки (бандл: распакованный каталог, `compose/.env` и `compose/.env.images` рядом; deploy.sh: `/srv/rtk-<env>/` и `-p rtk-<env>`). Процедура проверена на стенде из офлайн-бандла: после неё данные на месте, smoke зелёный.
+
+```bash
+BK=/root/backups/rtk-crm-<метка>                    # каталог бэкапа
+DC="docker compose -f compose/docker-compose.yml --env-file compose/.env --env-file compose/.env.images"
+
+( cd "$BK" && sha256sum --quiet -c SHA256SUMS )     # 1. бэкап цел (при расхождении — стоп)
+bash scripts/backup.sh --env-file compose/.env --images-env compose/.env.images --out /root/backups   # 2. страховка: снимок текущего состояния, даже испорченного
+
+$DC stop api worker keycloak caddy                  # 3. никто не пишет в БД; postgres остаётся запущенным
+$DC exec -T postgres psql -U crm -d postgres -v ON_ERROR_STOP=1     -c 'DROP DATABASE crm WITH (FORCE)' -c 'DROP DATABASE keycloak WITH (FORCE)'     -c 'CREATE DATABASE crm' -c 'CREATE DATABASE keycloak'
+$DC exec -T postgres psql -U crm -d postgres < "$BK/globals.sql" || true                          # роли: «already exists» — норма
+$DC exec -T postgres pg_restore -U crm -d crm      --no-owner < "$BK/crm.dump"                    # 4. базы
+$DC exec -T postgres pg_restore -U crm -d keycloak --no-owner < "$BK/keycloak.dump"
+
+$DC up -d --wait --pull never                       # 5. поднять всё; migrate доводит схему до версии образов
+bash scripts/smoke.sh --env-file compose/.env       # 6. smoke
+```
+
+Имена баз и пользователя — `POSTGRES_DB` (по умолчанию `crm`) и `POSTGRES_USER` (`crm`) из `.env`; у стенда с `-p <проект>` добавьте `-p` в `DC`. Сверьте, что вернулись нужные данные (например, `$DC exec -T postgres psql -U crm -d crm -c 'select count(*) from deals'` против `counts.tsv` бэкапа). Файлы SeaweedFS лежат в `seaweed_data.tgz`; если они тоже потеряны: `$DC stop seaweedfs`, затем `docker run --rm --entrypoint tar -v <проект>_seaweed_data:/data -v "$BK":/backup <образ seaweedfs из .env.images> xzf /backup/seaweed_data.tgz -C /data` и `$DC up -d --wait --pull never` (эта часть в проверке не гонялась — сверяйте файлы в CRM после неё). Бэкап снимает базы ЦЕЛИКОМ, включая пользователей CRM и Keycloak: после восстановления пароли и сессии такие, какими были на момент бэкапа. Если восстанавливаете на другой хост, `BASE_URL`/realm возьмите у нового стенда (`scripts/set_host.sh`), не из старого `.env`.
+
 Для Kubernetes-пути — `kubectl exec` в под `postgres-0` тем же `pg_dump`/`pg_dumpall`, файлы SeaweedFS — снапшот PVC.
 
 ## Kubernetes / Helm
@@ -276,7 +301,13 @@ helm install rtk-crm charts/rtk-crm -n rtk-crm --create-namespace \
 
 ## Перед боевым контуром
 
-Используйте `deploy.sh --init --profile prod` — он сам генерирует все секреты и не оставляет демо-значений в `.env`, `realm-crm.json`, `s3.json`; `deploy.sh` для `RTK_ENV=prod` отказывается стартовать с демо-секретами, а образ api при `APP_PROFILE=prod` не запустится с демо-значениями `SIGNATURE_SERVER_SECRET`, `KEYCLOAK_*_SECRET`, `S3_*`, `CRM_APP_PASSWORD`. Остаётся вручную: удалить/отключить демо-учётки в Keycloak. Публичное имя и TLS задаются при установке (`--host`, `--tls acme`, см. «Домен и TLS»).
+Ставьте prod штатно: `install.sh --profile prod --host <имя>` из бандла или `deploy.sh --init --profile prod --host <имя>` (оба вызывают `scripts/gen_env.sh`). Скрипт сам:
+
+- генерирует ВСЕ секреты и ключи и не оставляет демо-значений в `.env`, `realm-crm.json`, `s3.json`, включая обязательные в prod `FIELD_ENCRYPTION_KEY` (Fernet, шифрование ПДн; без него `migrate` падает с «FIELD_ENCRYPTION_KEY: обязателен в prod»), `SETTINGS_ENCRYPTION_KEY`, `AUDIT_HMAC_KEY` и `HEALTH_DETAILS_TOKEN`. **Сохраните копию `FIELD_ENCRYPTION_KEY` отдельно от БД**: без ключа зашифрованные поля не прочитать (бэкап базы его не содержит);
+- **не создаёт демо-пользователей** (в `realm-crm.json` prod их нет: `admin.crm` и остальные с паролями из репозитория отсутствуют) и заводит одного администратора `admin` (адрес — `--admin-email`, по умолчанию `admin@<хост>`; роль ADMIN) с временным паролем. Пароль печатается крупным блоком в конце установки и лежит в `.env` (`CRM_ADMIN_INITIAL_PASSWORD`). При первом входе Keycloak потребует задать свой; запись пользователя в БД CRM бэкенд создаёт сам при первом входе. После смены пароля удалите строку `CRM_ADMIN_INITIAL_PASSWORD` из `.env` (она устарела). Остальных пользователей администратор заводит в интерфейсе (приглашением);
+- отказывается стартовать с демо-секретами: `deploy.sh` для `RTK_ENV=prod`, а образ api при `APP_PROFILE=prod` не запустится с демо-значениями `SIGNATURE_SERVER_SECRET`, `KEYCLOAK_*_SECRET`, `S3_*`, `CRM_APP_PASSWORD`; `smoke.sh --env-file` (его вызывают `install.sh` и `deploy.sh`) в prod дополнительно проверяет, что четыре ключа выше заданы.
+
+Realm Keycloak импортируется один раз при создании БД Keycloak. Если prod ставили старой версией (демо-пользователи уже в БД Keycloak), правка файла не поможет: удалите пользователей `admin.crm`, `admin.volkov`, `head.petrov`, `kam.ivanov`, `auditor.smirnov` в консоли Keycloak (с самого сервера: `/auth/admin`, realm `crm`) или переустановите стенд. Helm-чарт в prod: `secrets.fieldEncryptionKey`, `settingsEncryptionKey`, `auditHmacKey`, `healthDetailsToken` обязательны, а realm берётся из `--set-file keycloak.realmJson=<state-dir>/runtime/keycloak/realm-crm.json` (его создаёт `gen_env.sh --profile prod`), иначе чарт не отрисуется. Публичное имя и TLS задаются при установке (`--host`, `--tls acme`, см. «Домен и TLS»).
 
 ## Мониторинг и логи
 
