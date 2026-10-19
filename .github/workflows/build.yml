@@ -1,17 +1,20 @@
 name: build
 
-# Собирает и пушит собственные образы deploy-репо (сейчас — мок-сервисы;
+# Собирает и пушит собственные образы deploy-репо (мок-сервисы и сайт школы `site`;
 # новые контексты добавляются в matrix ниже). backend/frontend публикуют
 # свои образы через docker-publish.yml и присылают repository_dispatch —
 # сюда это не относится.
 #
-# Порядок как в docker-publish.yml: локальная сборка → Trivy → push. Образ,
-# не прошедший скан, в GHCR не попадает.
+# Порядок как в docker-publish.yml: сборка каждой платформы в tar → Trivy → multi-arch push
+# (linux/amd64 + linux/arm64). Образ, не прошедший скан, в GHCR не попадает.
+# Раннер — self-hosted [self-hosted, lct] (aarch64): `ubuntu-latest` в организации не работает
+# (нет биллинга), amd64 собирается через QEMU (binfmt), arm64 — нативно. См. docs/ci-self-hosted.md.
 on:
   push:
     branches: [main]
     paths:
       - "mocks/**"
+      - "site/**"
       - ".github/workflows/build.yml"
   workflow_dispatch: {}
 
@@ -25,8 +28,9 @@ permissions:
 jobs:
   build:
     name: build (${{ matrix.image }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: [self-hosted, lct]
+    # amd64 под QEMU на 2 vCPU: компиляция pdo_pgsql сайта и два скана — с запасом на медленный раннер.
+    timeout-minutes: 75
     permissions:
       contents: read
       packages: write
@@ -39,14 +43,39 @@ jobs:
             context: mocks/lms
           - image: mock-cms
             context: mocks/cms
+          # Сайт на Laravel: стадия assets тянет приватный пакет @lct-testkit/rt-ui из GitHub Packages
+          # (BuildKit-секрет npm_token = NODE_AUTH_TOKEN; у deploy должен быть доступ к пакету, docs/site.md).
+          - image: site
+            context: site
+            npm-token: "true"
     env:
       IMAGE_REPO: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+      # Пусто у образов без приватных npm-зависимостей: условие в secret-envs ниже тогда не передаёт секрет.
+      NODE_AUTH_TOKEN: ${{ matrix.npm-token == 'true' && (secrets.NODE_AUTH_TOKEN || secrets.GITHUB_TOKEN) || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Короткий sha
         id: sha
         run: echo "short=sha-$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Кросс-сборка требует binfmt-обработчика QEMU для чужой архитектуры (как в docker-publish.yml).
+      - name: QEMU (binfmt) для сборки чужой архитектуры
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            aarch64) foreign=x86_64;  short=amd64 ;;
+            x86_64)  foreign=aarch64; short=arm64 ;;
+            *) echo "::error::неизвестная архитектура раннера: $(uname -m)"; exit 1 ;;
+          esac
+          if [ "$(head -n1 "/proc/sys/fs/binfmt_misc/qemu-${foreign}" 2>/dev/null || true)" = "enabled" ]; then
+            echo "binfmt qemu-${foreign} уже включён"
+          else
+            echo "binfmt qemu-${foreign} не включён — ставлю"
+            docker run --privileged --rm \
+              tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 \
+              --install "${short}"
+          fi
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -56,36 +85,76 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build (локально, для скана)
+      - name: Build linux/amd64 (в tar, для скана)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
-          load: true
+          platforms: linux/amd64
+          outputs: type=docker,dest=${{ runner.temp }}/scan-amd64.tar
           push: false
           provenance: false
-          tags: scan/${{ matrix.image }}:candidate
+          tags: scan/${{ matrix.image }}:candidate-amd64
           cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
+          secret-envs: ${{ env.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
 
-      - name: Trivy
+      - name: Trivy linux/amd64 (CRITICAL/HIGH)
         uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
         with:
-          image-ref: scan/${{ matrix.image }}:candidate
+          input: ${{ runner.temp }}/scan-amd64.tar
           severity: CRITICAL,HIGH
           ignore-unfixed: true
           exit-code: "1"
           trivyignores: ${{ matrix.context }}/.trivyignore
 
-      - name: Push (SBOM + provenance)
+      - name: Build linux/arm64 (в tar, для скана)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/arm64
+          outputs: type=docker,dest=${{ runner.temp }}/scan-arm64.tar
+          push: false
+          provenance: false
+          tags: scan/${{ matrix.image }}:candidate-arm64
+          cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
+          secret-envs: ${{ env.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
+
+      - name: Trivy linux/arm64 (CRITICAL/HIGH)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          input: ${{ runner.temp }}/scan-arm64.tar
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: ${{ matrix.context }}/.trivyignore
+
+      - name: Push (multi-arch, SBOM + provenance)
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
+          platforms: linux/amd64,linux/arm64
           push: true
           provenance: mode=max
           sbom: true
           tags: ${{ env.IMAGE_REPO }}:${{ steps.sha.outputs.short }}
           cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache,mode=max
+          secret-envs: ${{ env.NODE_AUTH_TOKEN != '' && 'npm_token=NODE_AUTH_TOKEN' || '' }}
+
+      # Проверяем то, что реально лежит в GHCR: без обеих платформ образ не запустится на x86-проде или aarch64-стенде.
+      - name: Проверить платформы опубликованного образа
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          raw="$(docker buildx imagetools inspect "${IMAGE_REPO}@${DIGEST}" --raw | tr -d ' \n\r\t')"
+          for arch in amd64 arm64; do
+            grep -q "\"architecture\":\"${arch}\"" <<<"${raw}" || {
+              echo "::error::в ${IMAGE_REPO}@${DIGEST} нет linux/${arch}"
+              exit 1
+            }
+          done
+          echo "платформы в индексе: linux/amd64, linux/arm64"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
@@ -113,7 +182,7 @@ jobs:
   update-manifest:
     name: обновить images.yaml
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, lct]
     timeout-minutes: 15
     permissions:
       contents: write
@@ -151,5 +220,5 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           bash scripts/apply_and_push.sh \
-            "chore(images): обновить tag/digest моков (run ${RUN_ID})" \
+            "chore(images): обновить tag/digest образов deploy (run ${RUN_ID})" \
             bash apply_refs.sh

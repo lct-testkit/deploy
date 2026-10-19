@@ -1,0 +1,30 @@
+# Feature-тесты сайта на реальном PostgreSQL (на sqlite они не показали бы поведение микросекундных курсоров):
+#   docker compose -f docker-compose.test.yml up --build --abort-on-container-exit --exit-code-from tests
+#   docker compose -f docker-compose.test.yml down -v
+name: site-tests
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: site
+      POSTGRES_PASSWORD: site
+      POSTGRES_DB: site_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U site -d site_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    tmpfs:
+      - /var/lib/postgresql/data
+  tests:
+    build:
+      context: .
+      target: test
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_DATABASE: site_test
+      DB_USERNAME: site
+      DB_PASSWORD: site

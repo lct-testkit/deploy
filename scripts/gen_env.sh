@@ -116,6 +116,10 @@ S3_SECRET_KEY="$(rand 40)"
 S3_SIGN_ACCESS_KEY="$(rand 20)"
 S3_SIGN_SECRET_KEY="$(rand 40)"
 CMS_WEBHOOK_SECRET="$(rand 40)"
+CMS_AUTH_TOKEN="$(rand 40)"
+SITE_DB_PASSWORD="$(rand 32)"
+# Ключ приложения Laravel: 32 случайных байта в base64, формат `base64:...`.
+SITE_APP_KEY="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
 
 cp "${EXAMPLE}" "${ENV_FILE}"
 
@@ -135,6 +139,9 @@ set_var SETTINGS_ENCRYPTION_KEY "${SETTINGS_ENCRYPTION_KEY}"
 set_var S3_ACCESS_KEY "${S3_ACCESS_KEY}"
 set_var S3_SECRET_KEY "${S3_SECRET_KEY}"
 set_var CMS_WEBHOOK_SECRET "${CMS_WEBHOOK_SECRET}"
+set_var CMS_AUTH_TOKEN "${CMS_AUTH_TOKEN}"
+set_var SITE_DB_PASSWORD "${SITE_DB_PASSWORD}"
+set_var SITE_APP_KEY "${SITE_APP_KEY}"
 [[ "${PROFILE}" == "prod" ]] && set_var APP_MODE prod
 
 # Порты, адреса и TLS-переменные Caddy по режиму (--tls) и хосту. В режиме off несколько окружений на одной

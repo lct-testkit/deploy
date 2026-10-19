@@ -1,6 +1,4 @@
-# Единая точка входа контура (K8s-версия). Идентична backend/deploy/Caddyfile
-# (и ../../compose/Caddyfile — копии друг друга), с ОДНИМ отличием: апстрим
-# `api` статический, без блока `dynamic a` — см. комментарий у @backend ниже.
+# Единая точка входа контура.
 #
 # Caddy отвечает за TLS-терминацию и генерирует X-Request-Id, если клиент его
 # не передал. Дальше этот идентификатор проходит через логи, аудит и тело
@@ -9,19 +7,50 @@
 # HTTP-сайт слушает без имени хоста (catch-all), поэтому TLS-сайт обязан
 # иметь имя: два безымянных блока с разными политиками TLS конфликтуют.
 # Имя берётся из CRM_TLS_HOST, по умолчанию localhost.
+#
+# Режимы TLS задают переменные окружения (их пишет scripts/gen_env.sh, по умолчанию —
+# прежнее поведение локального стенда):
+#   CRM_TLS_HOST     имя TLS-сайта (SNI/ACME)                           localhost
+#   CRM_TLS_PORT     порт TLS-сайта внутри контейнера                   8443 (на публичном хосте — 443)
+#   CRM_TLS_SNIPPET  tls_internal (самоподписанный) | tls_acme (Let's Encrypt)   tls_internal
+#   S3_SITE_ADDRESS  адрес сайта S3-прокси (`:8333` или `хост:8333`)   :8333
+#   S3_TLS_SNIPPET   TLS S3-сайта: tls_none | tls_internal | tls_acme     tls_none
+# С публичным именем на 443 Caddy сам поднимает :80: выпускает сертификат (HTTP-01) и
+# редиректит http на https. Сертификаты лежат в томе caddy_data — при `down -v` они теряются
+# (у Let's Encrypt лимит выпусков на домен), не удаляйте том без нужды.
 
 {
 	admin off
-	auto_https disable_redirects
-	# Клиент без SNI (bare IP) иначе получал TLS alert internal error — тот же фикс, что в
-	# compose/Caddyfile (комментарий там подробнее, caddyserver/caddy#6364).
+	# Клиент без SNI в ClientHello (браузер/curl на bare IP — у IP-литералов нет "имени" для SNI, это
+	# ровно то, что шлёт любой клиент на --host <IP> --tls internal/acme) иначе получал TLS alert
+	# internal error: certmagic не находит сертификат без SNI-подсказки (проверено: TCP доходит,
+	# handshake рвётся именно на этом, независимо от сети/докера — тот же сертификат по имени хоста
+	# работает). caddyserver/caddy#6364, caddy.community "Default certificate when no matching SNI".
 	default_sni {$CRM_TLS_HOST}
 	servers {
 		trusted_proxies static private_ranges
 	}
 }
 
+# --- TLS-режимы (выбираются переменными CRM_TLS_SNIPPET / S3_TLS_SNIPPET) ---------------------
+(tls_internal) {
+	# Самоподписанный сертификат: в закрытом контуре внешний CA недоступен.
+	tls internal
+}
+
+(tls_acme) {
+	# Сертификат Let's Encrypt (нужны публичный DNS и порт 80 из интернета).
+	tls {
+		issuer acme
+	}
+}
+
+(tls_none) {
+	# Без TLS-директив: S3-прокси в локальном режиме отдаётся по plain http.
+}
+
 (common_headers) {
+	# Content-Security-Policy задаётся в crm_routes (не для /auth/*), здесь — остальные заголовки.
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
@@ -34,18 +63,28 @@
 (crm_routes) {
 	import common_headers
 
-	# CSP и X-Frame-Options не для /auth/*: страницы входа и консоль Keycloak используют inline-скрипты
-	# (importmap) и встраивают свои страницы в iframe (3p-cookies/step1.html, login-status-iframe.html),
-	# а наши script-src 'self' и DENY их блокировали — консоль вечно крутила индикатор. Там действуют
-	# собственные CSP (frame-ancestors 'self') и SAMEORIGIN Keycloak. `>` — отложенная установка:
-	# перекрывает заголовки апстрима, как и раньше.
+	# Веб-клиент (SPA) отдаётся с того же origin. Скрипты только со своего origin (сборка выносит
+	# bootstrap SvelteKit в /boot.js), presigned-ссылки SeaweedFS (загрузка, скачивание, PDF на
+	# странице подписания) живут на порту S3-прокси — им разрешены connect/img/frame.
+	# В локальной разработке с Vite (CSP_SCRIPT_SRC="'self' 'unsafe-inline' 'unsafe-eval'") политику
+	# ослабляют только для скриптов.
+	# Не для /auth/*: страницы входа и консоль Keycloak используют inline-скрипты (importmap), и наша
+	# script-src 'self' их блокировала. Там действует собственная CSP Keycloak (frame-ancestors 'self',
+	# object-src 'none'). `>` — отложенная установка: перекрывает CSP апстрима, как и раньше.
 	# И не для /grafana/*: интерфейс Grafana грузит inline-скрипты (grafanaBootData, тема), правит <base href>
-	# и использует eval — наши script-src 'self' и base-uri 'none' оставляли страницу пустой. Свои заголовки у Grafana.
+	# и использует eval — наши script-src 'self' и base-uri 'none' оставляли страницу пустой («Failed to
+	# start Grafana»). У Grafana свои заголовки (X-Frame-Options: deny), поэтому политику сюда не ставим.
 	@app_csp not path /auth/* /grafana/*
 	header @app_csp >Content-Security-Policy "default-src 'self'; img-src 'self' data: blob: {$S3_ORIGIN}; connect-src 'self' {$S3_ORIGIN}; style-src 'self' 'unsafe-inline'; script-src {$CSP_SCRIPT_SRC:'self'}; worker-src 'self' blob:; object-src 'self' blob:; frame-src 'self' blob: {$S3_ORIGIN}; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+
+	# X-Frame-Options по той же причине не для /auth/*: консоль администратора Keycloak сама
+	# встраивает свои страницы (3p-cookies/step1.html, login-status-iframe.html) в iframe, и наш
+	# DENY блокировал их — консоль вечно крутила индикатор загрузки. Keycloak отдаёт там свой
+	# SAMEORIGIN вместе с frame-ancestors 'self'.
 	@app_frame not path /auth/* /grafana/*
 	header @app_frame >X-Frame-Options "DENY"
 
+	# Прокидываем идентификатор запроса или создаём новый.
 	@no_request_id not header X-Request-Id *
 	request_header @no_request_id X-Request-Id {http.request.uuid}
 
@@ -62,6 +101,9 @@
 		}
 	}
 
+	# Keycloak отдаётся под /auth, чтобы весь контур жил на одном порту.
+	# Именно handle, а не handle_path: Keycloak сам слушает на /auth
+	# (KC_HTTP_RELATIVE_PATH), поэтому префикс срезать нельзя.
 	# Консоль администратора Keycloak и realm master — только из закрытой сети (localhost, docker,
 	# VPN, ssh-туннель): с публичного адреса админ-вход не должен быть виден вовсе, а пароль
 	# администратора по умолчанию известен. Расширить круг: ADMIN_CONSOLE_ALLOW="10.0.0.0/8 203.0.113.7".
@@ -78,34 +120,50 @@
 		reverse_proxy keycloak:8080
 	}
 
+	# Метрики наружу не выставляются: их собирает Prometheus внутри сети.
 	handle /metrics {
 		respond "Not Found" 404
 	}
 
-	# Grafana (values.monitoring.enabled) — дашборды по метрикам Prometheus. `handle`, не `handle_path`:
-	# та же логика, что у /auth/* и в compose/Caddyfile (комментарий там подробнее) — GF_SERVER_SERVE_FROM_SUB_PATH=true
-	# + GF_SERVER_ROOT_URL=.../grafana/ в grafana-statefulset.yaml сами держат префикс, срезать его тут нельзя.
+	# Grafana (профиль compose `monitoring`, см. docker-compose.yml) — дашборды по метрикам Prometheus.
+	# `handle`, не `handle_path`: префикс НЕ срезаем, ровно как у /auth/* — Grafana сама знает, что живёт
+	# под /grafana (GF_SERVER_SERVE_FROM_SUB_PATH=true + GF_SERVER_ROOT_URL=.../grafana/), и сама строит
+	# абсолютные ссылки/редиректы/куки с этим префиксом. Срезать префикс здесь (handle_path) с этими
+	# двумя переменными означало бы двойной префикс либо битые редиректы — у Grafana свой вход
+	# (администратора), отдельного IP-ограничения, в отличие от консоли Keycloak, здесь не заводим.
 	# `/grafana` без слэша иначе не совпал бы с `/grafana/*` и ушёл в SPA-фолбэк клиента (200 с интерфейсом CRM).
 	redir /grafana /grafana/ 308
 	handle /grafana/* {
 		reverse_proxy grafana:3000
 	}
 
-	# API, публичные ручки подписания/проверки, health и статика Swagger UI — в FastAPI.
+	# Сайт школы (профиль compose `site`) на пути /site — запасной вариант, когда отдельное имя хоста (SITE_HOST) не задано.
+	# `handle_path` срезает префикс, а X-Forwarded-Prefix сообщает Laravel, под каким путём он опубликован: ссылки, формы,
+	# редиректы и ассеты строятся с /site. Контейнер site доступен и напрямую (http://site:8080) — так забирает заявки CRM.
+	redir /site /site/ 308
+	handle_path /site/* {
+		reverse_proxy site:8080 {
+			header_up X-Forwarded-Prefix /site
+		}
+	}
+
+	# API, публичные ручки подписания/проверки, health и статика Swagger UI (`/static/swagger/*`, `app/api/docs.py`,
+	# смонтирована на самом FastAPI-приложении абсолютным путём, не под `/api`) — в FastAPI.
 	@backend path /api/* /public/* /health/* /static/*
 	handle @backend {
-		# ЕДИНСТВЕННОЕ отличие от backend/deploy/Caddyfile: там апстрим — блок
-		# `dynamic a { name api; port 8000; refresh 10s }` + `lb_policy
-		# least_conn` (Caddy сам резолвит DNS docker-сети на все A-записи
-		# `api` и балансирует между ними — нужно для `docker compose --scale
-		# api=N` без перезапуска Caddy). В Kubernetes Service `api` УЖЕ сам
-		# балансирует между всеми Pod'ами-репликами api через ClusterIP
-		# (kube-proxy/iptables или IPVS) — это единственный стабильный VIP,
-		# а не набор A-записей на каждый под, поэтому `dynamic a` здесь не
-		# просто избыточен, а плохо соответствует модели K8s Service.
-		# Поэтому здесь — обычный статический апстрим на Service `api`.
-		reverse_proxy api:8000 {
+		reverse_proxy {
+			# Динамическое разрешение DNS вместо статического апстрима:
+			# `docker compose up --scale api=3` подхватывается без
+			# перезапуска Caddy. У api один воркер на контейнер, поэтому
+			# масштабирование идёт именно репликами.
+			dynamic a {
+				name api
+				port 8000
+				refresh 10s
+			}
+			lb_policy least_conn
 			header_up X-Real-IP {remote_host}
+			# Тяжёлые отчёты и импорты отвечают дольше дефолтных таймаутов.
 			transport http {
 				read_timeout 300s
 				write_timeout 300s
@@ -113,6 +171,31 @@
 		}
 	}
 
+	# Шрифты Rostelecom Basis. Они лицензионные и в git и образ `web` не входят (frontend/static/fonts
+	# в .gitignore, файлы выдаёт заказчик), поэтому лежат отдельным каталогом, смонтированным в /srv/fonts
+	# (compose: FONTS_DIR, по умолчанию ./fonts). Порядок: файл из каталога -> иначе апстрим (в разработке
+	# Vite отдаёт шрифты сам) -> если апстрим ответил HTML-заглушкой SPA, отдаём честный 404. Без этого
+	# SPA-fallback отвечает на /fonts/*.woff файлом index.html с кодом 200, браузер пишет «downloadable font:
+	# rejected by sanitizer», хотя нужна просто запасная гарнитура. no-cache: браузер не залипает на старом ответе.
+	# Вложенный `route`: порядок директив внутри должен остаться как написан (file_server до reverse_proxy),
+	# а сам `handle` нужен, чтобы блок входил в ту же взаимоисключающую группу, что и остальные handle.
+	handle /fonts/* {
+		route {
+			header Cache-Control "no-cache"
+			root * /srv
+			file_server {
+				pass_thru
+			}
+			reverse_proxy {$WEB_UPSTREAM:web:3000} {
+				@spa_fallback header Content-Type text/html*
+				handle_response @spa_fallback {
+					respond "Not Found" 404
+				}
+			}
+		}
+	}
+
+	# Всё остальное — веб-клиент (статический SPA-образ `web`; в разработке WEB_UPSTREAM указывает на Vite).
 	handle {
 		reverse_proxy {$WEB_UPSTREAM:web:3000}
 	}
@@ -122,11 +205,58 @@
 	import crm_routes
 }
 
-{$CRM_TLS_HOST:localhost}:8443 {
-	tls internal
+{$CRM_TLS_HOST:localhost}:{$CRM_TLS_PORT:8443} {
+	import {$CRM_TLS_SNIPPET:tls_internal}
 	import crm_routes
 }
 
-:8333 {
+# --- Сайты по имени хоста (необязательные) ----------------------------------------------------------------------
+# Ключ блока = SITE_ADDRESSES/LMS_ADDRESSES из compose («имя:порт, » или пусто) + заведомо недоступный http-адрес внутри
+# контейнера: при пустой переменной блок остаётся без рабочих адресов (наружу не публикуется), при заданной — обычный
+# HTTPS-сайт с тем же режимом TLS (CRM_TLS_SNIPPET), что и основной: Let's Encrypt, самоподписанный или (off) без хоста.
+# Сертификаты лежат в томе caddy_data вместе с остальными.
+(host_headers) {
+	import common_headers
+	@no_request_id not header X-Request-Id *
+	request_header @no_request_id X-Request-Id {http.request.uuid}
+}
+
+{$SITE_ADDRESSES}http://127.0.0.1:65530 {
+	import {$CRM_TLS_SNIPPET:tls_internal}
+	import host_headers
+	# Политика только для сайта школы: свои скрипты и стили, шрифт Rostelecom Basis — с этого же хоста (/fonts/*).
+	header >Content-Security-Policy "default-src 'self'; img-src 'self' data:; font-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+	header >X-Frame-Options "DENY"
+	handle /fonts/* {
+		route {
+			header Cache-Control "no-cache"
+			root * /srv
+			file_server
+		}
+	}
+	handle {
+		reverse_proxy site:8080
+	}
+}
+
+{$LMS_ADDRESSES}http://127.0.0.1:65531 {
+	import {$CRM_TLS_SNIPPET:tls_internal}
+	import host_headers
+	# Мок LMS (профиль compose `integrations`): Prism из OpenAPI, без собственной авторизации.
+	handle {
+		reverse_proxy mock-lms:4010
+	}
+}
+
+# Presigned PUT/GET к SeaweedFS (раздел 9): API подписывает ссылки на этот
+# порт (S3_PUBLIC_ENDPOINT_URL), браузер клиента ходит сюда напрямую, минуя
+# API — иначе загрузка файла шла бы через воркер API, чего раздел 3.7 прямо
+# запрещает. Отдельный порт, а не префикс пути на :8080/:8443: подпись
+# SigV4 считается по полному пути запроса, и любой стрипинг префикса
+# прокси меняет подписанный путь и роняет проверку подписи на SeaweedFS —
+# префикс пути в принципе несовместим с presigned-URL так же, как был бы
+# несовместим с Keycloak, если бы у него не было собственного KC_HTTP_RELATIVE_PATH.
+{$S3_SITE_ADDRESS::8333} {
+	import {$S3_TLS_SNIPPET:tls_none}
 	reverse_proxy seaweedfs:8333
 }

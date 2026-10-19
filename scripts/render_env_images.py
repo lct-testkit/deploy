@@ -24,6 +24,12 @@ digest, в манифесте другой» невозможно по пост�
 
 Пустой tag/digest у собственного образа — ошибка (деплой таким манифестом
 невозможен); `--allow-missing` пропускает такие образы с предупреждением.
+
+Исключение — образ с `optional: true` в images.yaml (сейчас `site`, профиль compose `site`):
+пока он не опубликован, `<ИМЯ>_IMAGE` указывает на локальный тег `rtk-<имя>:local`
+(compose собирает его из `build:` — `docker compose --profile site up --build`), а из
+`--list` (офлайн-бандл, registry) образ исключается. Так отсутствие необязательного
+образа не блокирует деплой всего стека.
 """
 from __future__ import annotations
 
@@ -55,6 +61,17 @@ def collect(doc: dict, allow_missing: bool) -> tuple[list[dict], list[str]]:
     for name, spec in (doc.get("images") or {}).items():
         tag, digest = spec.get("tag", ""), spec.get("digest", "")
         if not tag or not digest:
+            if spec.get("optional"):
+                print(
+                    f"WARN images.{name}: опциональный образ не опубликован — "
+                    f"{_var(name)}=rtk-{name}:local (сборка из compose build:)",
+                    file=sys.stderr,
+                )
+                items.append(
+                    {"name": name, "var": _var(name), "source": f"rtk-{name}:local",
+                     "tag": "local", "local": True}
+                )
+                continue
             missing.append(f"images.{name}")
             continue
         items.append(
@@ -112,14 +129,22 @@ def main() -> int:
 
     if args.list:
         for it in items:
+            if it.get("local"):
+                continue  # не опубликован: в бандл/registry класть нечего
             print("\t".join([it["name"], it["source"], bundle_ref(it), registry_ref(it)]))
         return 0
 
-    pick = {
-        "digest": lambda it: it["source"],
-        "bundle": bundle_ref,
-        "registry": registry_ref,
-    }[args.mode]
+    def pick_for(fn):
+        # Неопубликованный optional-образ во всех режимах — локальный тег.
+        return lambda it: it["source"] if it.get("local") else fn(it)
+
+    pick = pick_for(
+        {
+            "digest": lambda it: it["source"],
+            "bundle": bundle_ref,
+            "registry": registry_ref,
+        }[args.mode]
+    )
     print(f"# Сгенерировано render_env_images.py (mode={args.mode}) — не редактировать руками.")
     for it in items:
         print(f"{it['var']}={pick(it)}")
