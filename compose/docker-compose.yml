@@ -414,6 +414,8 @@ services:
       # чтобы ключ блока не был пустым (пустой ключ Caddy не принимает).
       SITE_ADDRESSES: ${SITE_HOST:+${SITE_HOST}:${CRM_TLS_PORT:-8443}, }
       LMS_ADDRESSES: ${LMS_HOST:+${LMS_HOST}:${CRM_TLS_PORT:-8443}, }
+      # MAIL_HOST — отдельное имя для почты стенда: переход на https://<CRM_TLS_HOST>/mail/.
+      MAIL_ADDRESSES: ${MAIL_HOST:+${MAIL_HOST}:${CRM_TLS_PORT:-8443}, }
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
