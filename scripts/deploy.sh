@@ -10,7 +10,7 @@
 #   scripts/deploy.sh                      # RTK_ENV=demo (по умолчанию)
 #   RTK_ENV=dev scripts/deploy.sh          # окружение dev
 #   scripts/deploy.sh --init [--profile prod] [--host crm.example.local] [--tls acme|internal|off] [--fonts <каталог>]
-#                            [--port-offset 100]
+#                            [--port-offset 100] [--admin-email <адрес>]
 #                                          # первый запуск: сгенерировать секреты и runtime/
 #   scripts/deploy.sh rollback             # вернуть образы предыдущего успешного деплоя
 #
@@ -48,7 +48,7 @@ while [[ $# -gt 0 ]]; do
     rollback) MODE="rollback"; shift ;;
     --init) MODE="init"; shift ;;
     --no-pull) NO_PULL=1; shift ;;
-    --profile|--host|--port-offset|--tls|--fonts) INIT_ARGS+=("$1" "$2"); shift 2 ;;
+    --profile|--host|--port-offset|--tls|--fonts|--admin-email) INIT_ARGS+=("$1" "$2"); shift 2 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
   esac
 done
@@ -88,7 +88,7 @@ apply_images() {
 healthy() {
   local http_port
   http_port="$(grep -E '^HTTP_PORT=' "${ENV_FILE}" | tail -1 | cut -d= -f2)"
-  bash "${REPO_DIR}/scripts/smoke.sh" "http://localhost:${http_port:-8080}" --timeout 180
+  bash "${REPO_DIR}/scripts/smoke.sh" "http://localhost:${http_port:-8080}" --timeout 180 --env-file "${ENV_FILE}"
 }
 
 if [[ "${MODE}" == "rollback" ]]; then
