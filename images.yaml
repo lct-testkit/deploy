@@ -42,8 +42,8 @@ images:
     context: site
     dockerfile: Dockerfile
     optional: true
-    tag: ""
-    digest: ""
+    tag: "sha-e6f3afe"
+    digest: "sha256:7064bead1d4ca31cab8dfb075a054b5f40d86f918e6cfca3ce343f0cf7f68e17"
   mock-cms:
     repo: deploy
     context: mocks/cms
