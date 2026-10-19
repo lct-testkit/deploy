@@ -14,7 +14,10 @@ RUN apk update && apk upgrade --no-cache
 # на dist/index.js, и при копировании одного файла между стадиями он
 # разрешается в момент COPY и ломается (require('yargs') не находит
 # node_modules). Зовём node на реальный entry point напрямую.
-COPY --from=deps /usr/local/lib/node_modules /usr/local/lib/node_modules
+# Из deps берём только prism. npm и corepack базового образа рантайму не нужны, а их транзитивные
+# зависимости (brace-expansion, undici) — источник CVE в сканах: удаляем.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \n    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack
+COPY --from=deps /usr/local/lib/node_modules/@stoplight /usr/local/lib/node_modules/@stoplight
 COPY openapi.yaml /openapi.yaml
 
 EXPOSE 4010
