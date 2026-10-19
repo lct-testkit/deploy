@@ -83,6 +83,8 @@ x-api-env: &api-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   SMTP_FROM: ${SMTP_FROM:-}
+  # Имя отправителя в поле From («РТК Школа CRM <SMTP_FROM>»).
+  SMTP_FROM_NAME: ${SMTP_FROM_NAME:-РТК Школа CRM}
   SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
   SIGNATURE_EXPOSE_DEBUG_OTP: ${SIGNATURE_EXPOSE_DEBUG_OTP:-}
   # Синхронизация с backend/docker-compose.yml после backend#62 (P1/P2): без этих строк

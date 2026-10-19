@@ -185,6 +185,8 @@ $(VAR)-подстановку в поле `value:` только для пере�
   valueFrom: { secretKeyRef: { name: {{ include "rtk-crm.secretName" . }}, key: smtp-password } }
 - name: SMTP_FROM
   value: {{ .Values.env.smtpFrom | quote }}
+- name: SMTP_FROM_NAME
+  value: {{ .Values.env.smtpFromName | quote }}
 - name: SMTP_STARTTLS
   value: {{ .Values.env.smtpStarttls | quote }}
 # backend#62 (P1/P2): шифрование ПДн учащегося, полный /health/details, забор у сайта и LMS, API-ключи.
