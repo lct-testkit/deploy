@@ -154,16 +154,19 @@ jobs:
       - name: Проверить платформы опубликованного образа
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
+          # Ожидаемые платформы — те же, что собирались (у сайта только amd64).
+          PLATFORMS: ${{ matrix.platforms || 'linux/amd64,linux/arm64' }}
         run: |
           set -euo pipefail
           raw="$(docker buildx imagetools inspect "${IMAGE_REPO}@${DIGEST}" --raw | tr -d ' \n\r\t')"
-          for arch in amd64 arm64; do
+          for platform in ${PLATFORMS//,/ }; do
+            arch="${platform#linux/}"
             grep -q "\"architecture\":\"${arch}\"" <<<"${raw}" || {
               echo "::error::в ${IMAGE_REPO}@${DIGEST} нет linux/${arch}"
               exit 1
             }
           done
-          echo "платформы в индексе: linux/amd64, linux/arm64"
+          echo "платформы в индексе: ${PLATFORMS}"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
