@@ -38,6 +38,8 @@ spec:
         {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 8 }}
       annotations:
         checksum/config: {{ .Files.Get "files/realm-crm.json" | sha256sum }}
+        # Keycloak кэширует темы: изменение файлов темы должно перезапускать pod.
+        checksum/email-theme: {{ include (print $.Template.BasePath "/configmap-keycloak-email-theme.yaml") . | sha256sum }}
     spec:
       {{- include "rtk-crm.imagePullSecrets" . | nindent 6 }}
       # depends_on postgres: condition: service_healthy в backend/docker-compose.yml.
@@ -70,12 +72,15 @@ spec:
             # Keycloak живёт под /auth, чтобы весь контур был на одном порту Caddy.
             - name: KC_HTTP_RELATIVE_PATH
               value: /auth
-            - name: KC_HOSTNAME_URL
+            # Публичный адрес Keycloak (hostname v2, Keycloak 25): полный URL вместе с /auth — issuer токенов,
+            # ссылки писем и редиректы формы входа. Прежний KC_HOSTNAME_URL относится к hostname v1 и в
+            # Keycloak 25 молча не действует (письма получали ссылку на внутренний keycloak:8080).
+            - name: KC_HOSTNAME
               value: {{ .Values.env.keycloakPublicURL | quote }}
-            - name: KC_HOSTNAME_STRICT
-              value: "false"
-            - name: KC_HOSTNAME_STRICT_HTTPS
-              value: "false"
+            # Backchannel (token, JWKS, Admin API) динамический: api ходит по внутреннему
+            # http://keycloak:8080/auth, а issuer в токене остаётся публичным.
+            - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
+              value: "true"
             - name: KC_PROXY_HEADERS
               value: xforwarded
             - name: KC_HEALTH_ENABLED
@@ -90,6 +95,10 @@ spec:
           volumeMounts:
             - name: keycloak-realm
               mountPath: /opt/keycloak/data/import
+              readOnly: true
+            # Русская email-тема rtk-crm (ConfigMap keycloak-email-theme, файлы charts/rtk-crm/files/themes).
+            - name: keycloak-email-theme
+              mountPath: /opt/keycloak/themes/rtk-crm/email
               readOnly: true
           # Точный перенос healthcheck сервиса keycloak из
           # backend/docker-compose.yml: в образе нет ни curl, ни wget,
@@ -126,3 +135,13 @@ spec:
         - name: keycloak-realm
           configMap:
             name: keycloak-realm
+        # ConfigMap не хранит каталоги: ключ — путь с «/», заменённым на «__», items возвращают исходную структуру.
+        - name: keycloak-email-theme
+          configMap:
+            name: keycloak-email-theme
+            items:
+              {{- range $path, $_ := .Files.Glob "files/themes/rtk-crm/email/**" }}
+              {{- $rel := trimPrefix "files/themes/rtk-crm/email/" $path }}
+              - key: {{ replace "/" "__" $rel | quote }}
+                path: {{ $rel | quote }}
+              {{- end }}

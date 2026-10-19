@@ -78,6 +78,11 @@ apply_images() {
   dc "${images_env}" pull
   log "docker compose up -d --wait (пересоздаст только изменившиеся контейнеры)"
   dc "${images_env}" up -d --wait --wait-timeout 300 --remove-orphans
+  # Русская email-тема Keycloak: у уже развёрнутого стенда realm не переимпортируется, выбираем тему в нём
+  # (идемпотентно, чужую тему не затирает). Не критично: при сбое откат образов не нужен.
+  bash "${REPO_DIR}/scripts/kc_apply_email_theme.sh" --compose "${COMPOSE_FILE}" --env-file "${ENV_FILE}" \
+    --images-env "${images_env}" --project "${PROJECT}" \
+    || log "ПРЕДУПРЕЖДЕНИЕ: email-тема rtk-crm не подключена к realm (scripts/kc_apply_email_theme.sh)"
 }
 
 healthy() {

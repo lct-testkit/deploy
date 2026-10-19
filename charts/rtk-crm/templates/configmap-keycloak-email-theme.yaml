@@ -1,0 +1,24 @@
+# Email-тема Keycloak rtk-crm — verbatim-копия backend/deploy/keycloak/themes/rtk-crm/email
+# (см. files/themes/rtk-crm/email; scripts/check_drift.py сверяет копии побайтно).
+# ConfigMap не хранит каталоги, поэтому ключ — относительный путь с «/», заменённым на «__»;
+# keycloak-deployment.yaml раскладывает файлы обратно через items. Картинки (логотип) идут в binaryData.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: keycloak-email-theme
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "rtk-crm.componentLabels" (dict "ctx" $ "name" "keycloak") | nindent 4 }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/themes/rtk-crm/email/**" }}
+  {{- if not (hasSuffix ".png" $path) }}
+  {{ replace "/" "__" (trimPrefix "files/themes/rtk-crm/email/" $path) | quote }}: |-
+{{ $.Files.Get $path | indent 4 }}
+  {{- end }}
+  {{- end }}
+binaryData:
+  {{- range $path, $_ := .Files.Glob "files/themes/rtk-crm/email/**" }}
+  {{- if hasSuffix ".png" $path }}
+  {{ replace "/" "__" (trimPrefix "files/themes/rtk-crm/email/" $path) | quote }}: {{ $.Files.Get $path | b64enc }}
+  {{- end }}
+  {{- end }}
