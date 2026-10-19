@@ -25,6 +25,10 @@
 #   --registry     поднять внутренний registry (localhost:5000) и залить в него образы
 #   --monitoring   поднять Prometheus + Grafana (дашборды по метрикам API на /grafana, профиль compose
 #                  `monitoring`); по умолчанию не поднимается
+#   --mail         поднять Mailpit — ловушку писем (интерфейс на /mail, логин mail, пароль — MAILPIT_UI_PASSWORD в
+#                  compose/.env): SMTP api/worker и Keycloak указываются на неё, письма наружу не уходят. Для demo
+#                  включено по умолчанию, для prod — нет (там SMTP_* настраивают под реальный релей)
+#   --no-mail      demo без Mailpit: SMTP_* остаются пустыми (письма не уходят)
 #   --no-start     только проверить, загрузить образы и создать .env, стек не запускать
 #
 # Без терминала (CI, ssh без tty) вопросов нет: берутся флаги и значения по умолчанию
@@ -52,6 +56,7 @@ SKIP_DNS=0
 RECONFIGURE=0
 WITH_REGISTRY=0
 WITH_MONITORING=0
+MAIL=""
 START=1
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +73,8 @@ while [[ $# -gt 0 ]]; do
     --reconfigure) RECONFIGURE=1; shift ;;
     --registry) WITH_REGISTRY=1; shift ;;
     --monitoring) WITH_MONITORING=1; shift ;;
+    --mail) MAIL=on; shift ;;
+    --no-mail) MAIL=off; shift ;;
     --no-start) START=0; shift ;;
     -h|--help) sed -n '2,/^set -euo pipefail/{/^set -euo pipefail/!p}' "${SELF}"; exit 0 ;;
     *) echo "неизвестный аргумент: $1" >&2; exit 2 ;;
@@ -241,6 +248,12 @@ case "${TLS}" in
 esac
 seed_label="нет (чистая система)"
 [[ "${SEED}" == 1 ]] && seed_label="да (справочники, организации, сделки, задачи, ЕГРЮЛ, праздники)"
+mail_label="нет (SMTP_* пустые: письма не уходят)"
+if [[ "${EXISTING_ENV}" == 1 ]]; then
+  [[ ",$(env_get COMPOSE_PROFILES)," == *,mail,* ]] && mail_label="да (Mailpit, интерфейс на /mail)"
+elif [[ "${MAIL:-$([[ "${PROFILE}" == demo ]] && echo on || echo off)}" == on ]]; then
+  mail_label="да (Mailpit: все письма системы видны на /mail, наружу не уходят)"
+fi
 monitoring_label="нет"
 [[ "${WITH_MONITORING}" == 1 ]] && monitoring_label="да (Prometheus + Grafana, дашборды на /grafana)"
 fonts_label="нет: интерфейс на запасной гарнитуре (файлы *.woff можно добавить позже, см. RUNBOOK)"
@@ -257,6 +270,7 @@ echo "   режим TLS:       ${TLS}"
 echo "   шрифты:          ${fonts_label}"
 echo "   моковые данные:  ${seed_label}"
 echo "   мониторинг:      ${monitoring_label}"
+echo "   почта:           ${mail_label}"
 
 # --- предполётные проверки публичных режимов: до docker load, он долгий -------------------
 # Только свежая установка (иначе порты заняты нашим же стеком) и только если стек будем запускать.
@@ -371,6 +385,7 @@ if [[ ! -f compose/.env ]]; then
   gen_args=(--dir compose --profile "${PROFILE}" --tls "${TLS}" --port-offset "${PORT_OFFSET}")
   [[ -n "${HOST}" ]] && gen_args+=(--host "${HOST}")
   [[ -n "${FONTS_SRC}" ]] && gen_args+=(--fonts "${FONTS_SRC}")
+  [[ -n "${MAIL}" ]] && gen_args+=(--mail "${MAIL}")
   bash scripts/gen_env.sh "${gen_args[@]}"
 else
   echo "   compose/.env уже есть — не трогаю"
@@ -394,6 +409,11 @@ fi
 echo "== 4/6 docker compose up =="
 compose_profile_args=()
 [[ "${WITH_MONITORING}" == 1 ]] && compose_profile_args+=(--profile monitoring)
+# Любой --profile перекрывает COMPOSE_PROFILES из .env (там для demo лежит `mail`), поэтому профили из .env добавляем явно.
+env_profiles="$(grep -E '^COMPOSE_PROFILES=' compose/.env | tail -1 | cut -d= -f2- || true)"
+for p in ${env_profiles//,/ }; do
+  [[ "${p}" == monitoring && "${WITH_MONITORING}" == 1 ]] || compose_profile_args+=(--profile "${p}")
+done
 docker compose -f compose/docker-compose.yml --env-file compose/.env --env-file compose/.env.images \
   "${compose_profile_args[@]}" up -d --wait --wait-timeout 300 --pull never
 
@@ -419,6 +439,9 @@ echo
 echo "готово: ${FINAL_URL}"
 if [[ "${WITH_MONITORING}" == 1 ]]; then
   echo "   Grafana: ${FINAL_URL}/grafana/ (логин — GRAFANA_ADMIN_USER/GRAFANA_ADMIN_PASSWORD в compose/.env)"
+fi
+if [[ ",${env_profiles}," == *,mail,* ]]; then
+  echo "   Почта (Mailpit, все письма системы): ${FINAL_URL}/mail/ (логин mail, пароль — MAILPIT_UI_PASSWORD в compose/.env)"
 fi
 if [[ "${PROFILE}" == demo ]]; then
   echo "   вход: на экране входа выберите демо-учётку (администратор, руководитель, менеджер, аудитор)"

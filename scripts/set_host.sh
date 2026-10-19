@@ -78,13 +78,20 @@ echo "set_host: копия .env -> ${BACKUP}"
 rtk_apply_mode_env "${ENV_FILE}" "${MODE}" "${HOST}" "${OFFSET}"
 echo "set_host: режим TLS ${CUR_MODE} -> ${MODE}, адрес ${PREV_BASE:-?} -> ${RTK_BASE_URL}"
 
+# Ловушка писем включена (SMTP_HOST=mailpit): адрес отправителя следует за хостом, realm получает smtpServer.
+MAIL_FROM=""
+if [[ "$(env_get SMTP_HOST)" == mailpit ]]; then
+  MAIL_FROM="$(rtk_mail_from "${HOST}")"
+  rtk_env_set "${ENV_FILE}" SMTP_FROM "${MAIL_FROM}"
+fi
+
 # --- realm-файл (для новой БД Keycloak; у существующей его не читают) -------------------------------------
 IMPORT_DIR="$(env_get KEYCLOAK_IMPORT_DIR)"
 TEMPLATE="${REPO_DIR}/compose/keycloak/realm-crm.json"
 if [[ -n "${IMPORT_DIR}" && -d "${IMPORT_DIR}" && -f "${TEMPLATE}" ]]; then
   rtk_render_realm "${TEMPLATE}" "${IMPORT_DIR}/realm-crm.json" \
     "$(env_get KEYCLOAK_CLIENT_SECRET)" "$(env_get KEYCLOAK_ADMIN_CLIENT_SECRET)" \
-    "${MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}"
+    "${MODE}" "${HOST}" "${RTK_HTTP_PORT}" "${RTK_HTTPS_PORT}" "${MAIL_FROM}"
   chmod 644 "${IMPORT_DIR}/realm-crm.json"
   echo "set_host: обновлён ${IMPORT_DIR}/realm-crm.json"
 fi

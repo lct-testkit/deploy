@@ -110,12 +110,20 @@ external:
     # Тот же профиль/флаг, что у prometheus. digest — `docker pull` + `docker image inspect`, 28.09.2026.
     ref: docker.io/grafana/grafana:13.2.2
     digest: "sha256:ac461fb352abc50da10a51c7d02462e9c05488f11f53f14b3ad79a8145f638a0"
+  mailpit:
+    # Ловушка писем демо-стенда (профиль compose `mail`): принимает всю исходящую почту системы (приглашения,
+    # сброс пароля, ссылки подписантам, уведомления) по SMTP :1025 во внутренней сети и показывает её в веб-
+    # интерфейсе на /mail за Caddy (basic-авторизация). v1.31.6 — не latest; digest — `docker pull` +
+    # `docker image inspect`, 19.10.2026 (индекс multi-arch amd64/arm64).
+    ref: docker.io/axllent/mailpit:v1.31.6
+    digest: "sha256:23fe39e81bde596a918000b3135c0f85dc8bb4c9ea6be274b051143f3e300387"
 
 # Профили compose. core поднимается всегда (`docker compose up -d`): это
 # ровно то, что запускает compose/docker-compose.yml без --profile.
-# integrations, registry, demo-data и monitoring включаются явно (demo-data — моковые данные,
+# integrations, registry, demo-data, monitoring и mail включаются явно (demo-data — моковые данные,
 # только для демо-стенда: scripts/seed_demo.sh; monitoring — Prometheus + Grafana,
-# scripts/bundle_install.sh --monitoring).
+# scripts/bundle_install.sh --monitoring; mail — Mailpit, ловушка писем: для demo её включает
+# gen_env.sh/install.sh через COMPOSE_PROFILES в .env, отключается --no-mail).
 profiles:
   core:
     - caddy
@@ -140,3 +148,5 @@ profiles:
   monitoring:
     - prometheus
     - grafana
+  mail:
+    - mailpit

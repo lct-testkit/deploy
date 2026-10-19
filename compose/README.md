@@ -22,7 +22,10 @@ compose не стартует (fail closed) — так «в compose один dig
   `demo-data` — одноразовый `seed-demo` (node) с моковыми данными, его запускает `../scripts/seed_demo.sh`
   после `up --wait` (только `APP_PROFILE=demo`; скрипты лежат в `../seed`); `monitoring` — Prometheus +
   Grafana (дашборды по метрикам `api`/`worker`/`keycloak` из `prometheus/`, `grafana/`), отдаётся через Caddy на
-  `/grafana` — см. `../RUNBOOK.md`, «Мониторинг и логи».
+  `/grafana` — см. `../RUNBOOK.md`, «Мониторинг и логи»; `mail` — Mailpit, ловушка писем: принимает по SMTP
+  (`mailpit:1025`, только во внутренней сети) всю почту api/worker и Keycloak, интерфейс на `/mail` за Caddy
+  (логин `mail`, пароль `MAILPIT_UI_PASSWORD` из `.env`; без пароля маршрут закрыт). Для demo `gen_env.sh`
+  включает его сам (`COMPOSE_PROFILES=mail` в `.env`), для prod — нет; см. `../RUNBOOK.md`, «Ключи аудита и почта».
 - `.env.example` — переменные окружения (структура и дефолты как в `backend/.env.example`).
   Секретов там демо-значения; боевой `.env` генерирует `../scripts/gen_env.sh`.
 - `Caddyfile`, `postgres/init-keycloak-db.sh`, `seaweedfs/s3.json`, `keycloak/realm-crm.json`
@@ -67,7 +70,7 @@ Caddy; PostgreSQL — только на loopback хоста (`127.0.0.1:${POSTGR
 ```bash
 python3 ../scripts/render_env_images.py > /tmp/env.images
 docker compose --env-file .env.example --env-file /tmp/env.images \
-  --profile integrations --profile registry --profile demo-data --profile monitoring config --quiet
+  --profile integrations --profile registry --profile demo-data --profile monitoring --profile mail config --quiet
 ```
 
 Ничего не выводится, код возврата `0` — YAML и все `${...}`-подстановки валидны.

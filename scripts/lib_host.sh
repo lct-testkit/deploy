@@ -117,7 +117,34 @@ rtk_apply_mode_env() {
   RTK_BASE_URL="${base}" RTK_HTTP_PORT="${http_port}" RTK_HTTPS_PORT="${https_port}"
 }
 
-# rtk_render_realm <шаблон realm> <результат> <секрет crm-bff> <секрет crm-admin> <режим> <хост> <http_port> <https_port>
+# rtk_mail_from <хост> — адрес отправителя для ловушки писем: crm@ХОСТ (для IP — crm@rtk-crm.local: адрес с IP-литералом
+# без скобок Keycloak и часть SMTP-клиентов считают некорректным).
+rtk_mail_from() {
+  local host="${1:-localhost}"
+  if rtk_is_ipv4 "${host}"; then echo "crm@rtk-crm.local"; else echo "crm@${host}"; fi
+}
+
+# rtk_apply_mail_env <файл .env> <on|off> <хост> [пароль интерфейса]
+# on: SMTP api/worker -> Mailpit (внутренняя сеть, без TLS), COMPOSE_PROFILES=mail (compose поднимает mailpit), логин и пароль
+# интерфейса /mail (MAILPIT_UI_USER/MAILPIT_UI_PASSWORD; без пароля Caddy маршрут /mail не открывает).
+# off: SMTP не трогаем (в prod остаётся пустым/настраиваемым). COMPOSE_PROFILES не затираем чужие профили, а дополняем.
+rtk_apply_mail_env() {
+  local file="$1" mail="$2" host="$3" password="${4:-}" cur
+  [[ "${mail}" == on ]] || return 0
+  rtk_env_set "${file}" SMTP_HOST mailpit
+  rtk_env_set "${file}" SMTP_PORT 1025
+  rtk_env_set "${file}" SMTP_USER ""
+  rtk_env_set "${file}" SMTP_PASSWORD ""
+  rtk_env_set "${file}" SMTP_STARTTLS false
+  rtk_env_set "${file}" SMTP_FROM "$(rtk_mail_from "${host}")"
+  cur="$(grep -E '^COMPOSE_PROFILES=' "${file}" | tail -1 | cut -d= -f2- || true)"
+  case ",${cur}," in *,mail,*) ;; *) rtk_env_set "${file}" COMPOSE_PROFILES "${cur:+${cur},}mail" ;; esac
+  rtk_env_set "${file}" MAILPIT_UI_USER mail
+  [[ -z "${password}" ]] || rtk_env_set "${file}" MAILPIT_UI_PASSWORD "${password}"
+}
+
+# rtk_render_realm <шаблон realm> <результат> <секрет crm-bff> <секрет crm-admin> <режим> <хост> <http_port> <https_port> [адрес-отправителя]
+# Если задан адрес отправителя — в realm добавляется smtpServer на mailpit:1025 (письма Keycloak попадают в ловушку).
 # Realm с секретами стенда и адресами клиента crm-bff (redirectUris, webOrigins, post.logout.redirect.uris).
 #   off:            localhost:8080 / localhost:8443 заменяются на ХОСТ:порты стенда (как раньше);
 #   internal/acme:  localhost-адреса остаются (доступ с самого сервера), публичный https://ХОСТ ДОБАВЛЯЕТСЯ рядом.
@@ -125,9 +152,14 @@ rtk_apply_mode_env() {
 # меняет, адреса в БД правит scripts/set_host.sh. Результат читает Keycloak под другим UID, права ставит вызывающий.
 rtk_render_realm() {
   local src="$1" dst="$2" bff="$3" adm="$4" mode="$5" host="$6" http_port="$7" https_port="$8"
-  local pub="${host:-localhost}" tmp origin
+  local mail_from="${9:-}" pub="${host:-localhost}" tmp origin
   tmp="$(mktemp)"
   tr -d '\r' < "${src}" | sed -e "s|crm-bff-secret|${bff}|g" -e "s|crm-admin-secret|${adm}|g" > "${tmp}"
+  if [[ -n "${mail_from}" ]]; then
+    # SMTP Keycloak -> ловушка писем (внутренняя сеть, без TLS и авторизации).
+    sed -i -e "s|^  \"displayName\": .*,\$|&\n  \"smtpServer\": {\n    \"host\": \"mailpit\",\n    \"port\": \"1025\",\n    \"from\": \"${mail_from}\",\n    \"fromDisplayName\": \"RTK School CRM\",\n    \"auth\": \"false\",\n    \"ssl\": \"false\",\n    \"starttls\": \"false\"\n  },|" "${tmp}"
+    grep -q '"smtpServer"' "${tmp}" || { echo "realm: не удалось добавить smtpServer (структура realm-crm.json изменилась?)" >&2; rm -f "${tmp}"; return 1; }
+  fi
   if [[ "${mode}" == off ]]; then
     sed -i -e "s|//localhost:8080|//${pub}:${http_port}|g" -e "s|//localhost:8443|//${pub}:${https_port}|g" "${tmp}"
   else
