@@ -21,17 +21,19 @@ compose `site` под профилем `site`. Устройство прилож
 
 ```bash
 # 1. .env: секреты сайта создаёт gen_env.sh (SITE_APP_KEY, SITE_DB_PASSWORD, CMS_AUTH_TOKEN). Вручную — см. таблицу ниже.
-# 2. Образ: пока `site` не опубликован build.yml, SITE_IMAGE=rtk-site:local (локальная сборка из compose `build:`)
+# 2. Образ: `site` публикует build.yml, ссылка на него (tag/digest) уже в images.yaml и попадает в .env.images
 python scripts/render_env_images.py > .env.images
-docker compose --env-file .env --env-file .env.images --profile site up -d --build site
+docker compose --env-file .env --env-file .env.images --profile site pull site
+docker compose --env-file .env --env-file .env.images --profile site up -d site
 # 3. Caddy подхватит маршрут /site (перезапуск не нужен: апстрим резолвится по запросу)
 curl -s http://localhost:8080/site/up     # 200
 ```
 
-После публикации образа (`build.yml` пушит `ghcr.io/lct-testkit/site` и бот вписывает tag/digest в `images.yaml`)
-`--build` не нужен — `docker compose pull site`. Образ `site` помечен в `images.yaml` как `optional`: пока он не
-опубликован, `render_env_images.py` подставляет локальный тег и остальной деплой не блокируется; в офлайн-бандл
-неопубликованный образ не попадает.
+`build.yml` пушит `ghcr.io/lct-testkit/site` (только linux/amd64: все узлы стенда x86_64, на нём же, на раннере
+с меткой `lct-x64`, образ и собирается) и бот вписывает tag/digest в `images.yaml`. Образ помечен там как `optional`:
+пока его нет в манифесте, `render_env_images.py` подставляет локальный тег `rtk-site:local` и остальной деплой не
+блокируется (собрать его можно локально: `docker compose --profile site up -d --build site`); опубликованный
+образ едет в офлайн-бандле.
 
 ### Переменные (`.env`)
 
@@ -82,7 +84,7 @@ Patroni (нужен только для первого создания роли
 Техника: адреса блоков Caddy приходят из compose переменными `SITE_ADDRESSES`/`LMS_ADDRESSES` («имя:порт, » или пусто);
 к ним в Caddyfile дописан заведомо недоступный `http://127.0.0.1:6553x` (контейнерный, наружу не публикуется), чтобы ключ блока
 не был пустым. `LMS_HOST` проксирует на `mock-lms:4010` (профиль `integrations`, без собственной авторизации — это мок).
-`MAIL_HOST` (mailpit) добавляется после слияния PR с почтой (#45) — отдельным host-блоком по тому же принципу.
+`MAIL_HOST` (Mailpit, профиль `mail`) работает так же — отдельным host-блоком `MAIL_ADDRESSES`: переход на `/mail/` основного адреса CRM.
 
 ## Шрифт и дизайн-система
 

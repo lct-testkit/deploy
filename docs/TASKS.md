@@ -4,7 +4,7 @@
 
 ## 1. Переменные бэкенда
 
-`x-api-env` в `compose/docker-compose.yml` совпадает с бэкендом (42 имени, сверяет `check_drift.py --backend-dir`), `gen_env.sh` создаёт `AUDIT_HMAC_KEY` и `SETTINGS_ENCRYPTION_KEY`, почта описана в `RUNBOOK.md`. Helm-чарт получил те же переменные (`charts/rtk-crm/templates/_helpers.tpl` — `AUDIT_HMAC_KEY`/`SETTINGS_ENCRYPTION_KEY`/`SMTP_PASSWORD` через Secret, остальное через `values.yaml`; `helm lint` зелёный). Осталось:
+`x-api-env` в `compose/docker-compose.yml` совпадает с бэкендом (57 имён, сверяет `check_drift.py --backend-dir`), `gen_env.sh` создаёт `AUDIT_HMAC_KEY` и `SETTINGS_ENCRYPTION_KEY`, почта описана в `RUNBOOK.md`. Helm-чарт получил те же переменные (`charts/rtk-crm/templates/_helpers.tpl` — `AUDIT_HMAC_KEY`/`SETTINGS_ENCRYPTION_KEY`/`SMTP_PASSWORD` через Secret, остальное через `values.yaml`; `helm lint` зелёный). Осталось:
 
 - [x] На уже развёрнутых стендах добавить ключи в `.env` и пересоздать `api` и `worker` — снято: с v0.3.2 `lct` переустанавливался с нуля несколько раз (v0.4.0, v0.5.0/v0.5.1), каждый раз из бандла, где `gen_env.sh` уже создаёт эти ключи; стенда старше v0.3.2 не осталось.
 - [x] `check_drift.py` сверял список x-api-env только с `compose/docker-compose.yml`, не с чартом — снято: `check_api_env` в `scripts/check_drift.py` теперь дополнительно сверяет множество имён с `define "rtk-crm.apiEnv"` в `charts/rtk-crm/templates/_helpers.tpl` (без учёта `POSTGRES_PASSWORD` — она там только для сборки `KC_DATABASE_URL`, не настройка приложения).

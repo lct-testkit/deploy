@@ -12,7 +12,7 @@
 | публикация образов (`docker-publish.yml`) | self-hosted | multi-arch: linux/amd64 (эмуляция QEMU) + linux/arm64 (нативно); Trivy по каждой платформе; подпись cosign |
 | `notify` (запись tag/digest в `images.yaml`) | self-hosted | до записи проверяет платформы образа (`REQUIRE_ARCHES`) и поднимает стек из образов |
 | `e2e / stack` (up → smoke → бэкап → восстановление) | self-hosted | у каждого прогона свой compose-проект и свободные порты (`E2E_PROJECT`, `E2E_PORT_OFFSET=auto`) |
-| `build.yml` (образы моков и сайта `site`) | self-hosted | по образцу `docker-publish.yml`: multi-arch (amd64 через QEMU + arm64), Trivy по каждой платформе до push, проверка платформ в GHCR, cosign; триггеры — `mocks/**`, `site/**`, ручной запуск. Образ `site` собирается с BuildKit-секретом `npm_token` (приватный пакет rt-ui из GitHub Packages) |
+| `build.yml` (образы моков и сайта `site`) | self-hosted | по образцу `docker-publish.yml`: Trivy по каждой платформе до push, проверка платформ в GHCR (по `matrix.platforms`), cosign; триггеры — `mocks/**`, `site/**`, ручной запуск. Моки — multi-arch (amd64 через QEMU + arm64). `site` — только linux/amd64 и на отдельном x86_64-раннере с меткой `lct-x64` (без QEMU: `pdo_pgsql` под QEMU на aarch64 не собирается); собирается с BuildKit-секретом `npm_token` (приватный пакет rt-ui из GitHub Packages) |
 | `e2e / offline-bundle` (установка без сети) | `ubuntu-latest` | режет сеть iptables и делает `docker system prune` — на общем демоне недопустимо; сейчас не выполняется |
 | ночная нагрузка backend (`loadtest.yml`) | приостановлена | 50 RPS на 2 vCPU с девятью раннерами измерили бы раннер, а не код; запуск вручную на стенде |
 
@@ -22,6 +22,8 @@
 образ, собранный на раннере без `platforms:`, был бы arm64-only и не запустился на проде. Защита от этого:
 `docker-publish.yml` собирает обе платформы и проверяет их в опубликованном индексе, а `scripts/verify_image.sh`
 с `REQUIRE_ARCHES="amd64 arm64"` отклоняет образ без любой из них.
+
+Исключение — образ `site`: он собирается на x86_64-раннере `lct-x64` и публикуется только для amd64 (стенд целиком x86_64).
 
 **Что покрывает CI.** Стек в e2e поднимается на нативных arm64-вариантах. amd64-вариант, который уезжает на прод,
 в CI не исполняется — его проверяют установка на стенде и `scripts/smoke.sh`.
