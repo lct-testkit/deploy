@@ -49,6 +49,8 @@ jobs:
           # (BuildKit-секрет npm_token = NODE_AUTH_TOKEN; у deploy должен быть доступ к пакету, docs/site.md).
           - image: site
             context: site
+            # Стадии Dockerfile: test (phpunit) и runtime (сайт). Без target публикуется последняя стадия; берём явно.
+            target: runtime
             npm-token: "true"
             # Только x86_64: все узлы стенда amd64, а сборка pdo_pgsql под arm64 (QEMU/alpine) падает на autom4te.
             platforms: linux/amd64
@@ -96,6 +98,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
           platforms: linux/amd64
           outputs: type=docker,dest=${{ runner.temp }}/scan-amd64.tar
           push: false
@@ -118,6 +121,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
           platforms: linux/arm64
           outputs: type=docker,dest=${{ runner.temp }}/scan-arm64.tar
           push: false
@@ -141,6 +145,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
           platforms: ${{ matrix.platforms || 'linux/amd64,linux/arm64' }}
           push: true
           provenance: mode=max

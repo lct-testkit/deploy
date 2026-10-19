@@ -2,7 +2,8 @@
 # пользователем www-data, слушает 8080. Образ без dev-зависимостей; тесты — отдельный target `test`
 # (docker compose -f docker-compose.test.yml up).
 #
-# Стадии: assets (Vite + Svelte + rt-ui) -> vendor (composer, прод-зависимости) -> base (php-fpm + nginx + pdo_pgsql) -> runtime.
+# Стадии: assets (Vite + Svelte + rt-ui) -> vendor (composer, прод-зависимости) -> base (php-fpm + nginx + pdo_pgsql) -> test -> runtime.
+# runtime ОБЯЗАН оставаться последней стадией (его собирает CI, build.yml передаёт target: runtime, и без target получился бы он же).
 # База закреплена по digest, как и остальные образы репозитория.
 #
 # Сборка фронтенда требует доступа к приватному пакету дизайн-системы @lct-testkit/rt-ui (GitHub Packages): токен передаётся
@@ -58,6 +59,16 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 WORKDIR /var/www/html
 
+# Тесты: dev-зависимости, исходники тестов, php artisan test (target test). Стоит ВЫШЕ runtime намеренно: без явного
+# --target docker build собирает последнюю стадию, и образ с CMD phpunit однажды уже уехал в публикацию вместо сайта.
+FROM base AS test
+COPY --from=composer:2@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac /usr/bin/composer /usr/bin/composer
+COPY composer.json composer.lock ./
+RUN composer install --no-scripts --no-autoloader --prefer-dist --no-interaction --ignore-platform-reqs
+COPY . .
+RUN composer dump-autoload --no-interaction --ignore-platform-reqs && mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+CMD ["vendor/bin/phpunit"]
+
 FROM base AS runtime
 COPY --chown=www-data:www-data artisan composer.json ./
 COPY --chown=www-data:www-data app ./app
@@ -86,12 +97,3 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
     CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/up"]
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-
-# Тесты: dev-зависимости, исходники тестов, php artisan test. Не попадает в итоговый образ (target runtime).
-FROM base AS test
-COPY --from=composer:2@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac /usr/bin/composer /usr/bin/composer
-COPY composer.json composer.lock ./
-RUN composer install --no-scripts --no-autoloader --prefer-dist --no-interaction --ignore-platform-reqs
-COPY . .
-RUN composer dump-autoload --no-interaction --ignore-platform-reqs && mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
-CMD ["vendor/bin/phpunit"]
