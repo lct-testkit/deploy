@@ -258,6 +258,7 @@ env:
   smtpPort: "587"
   smtpUser: ""
   smtpFrom: ""
+  smtpFromName: "РТК Школа CRM"
   smtpStarttls: "true"
   # backend#62: забор по API у сайта (CMS) и LMS, API-ключи роли INTEGRATION, демо-учётки без смены пароля.
   cmsBaseURL: ""
