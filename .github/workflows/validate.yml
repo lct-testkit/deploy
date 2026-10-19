@@ -126,6 +126,14 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
 
+  bundle-refs:
+    name: офлайн-бандл · RUNBOOK ссылается только на то, что в бандле
+    runs-on: [self-hosted, lct]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: bash scripts/check_bundle_refs.sh
+
   shellcheck:
     name: shellcheck
     runs-on: [self-hosted, lct]
@@ -156,6 +164,18 @@ jobs:
           # умолчанию, как у ingress.enabled) ни разу не попадают под kubeconform.
           helm template charts/rtk-crm --set monitoring.enabled=true \
             | docker run --rm -i "${KUBECONFORM_IMAGE}" -strict -summary -
+          # prod без обязательных ключей и боевого realm обязан не отрисоваться (fail closed), с ними — отрисоваться.
+          if helm template charts/rtk-crm --set env.appProfile=prod >/dev/null 2>&1; then
+            echo "::error::чарт с env.appProfile=prod отрисовался без обязательных ключей и боевого realm"
+            exit 1
+          fi
+          echo '{"realm":"crm"}' > "${RUNNER_TEMP}/realm.json"
+          helm template charts/rtk-crm --set env.appProfile=prod \
+            --set secrets.fieldEncryptionKey=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE= \
+            --set secrets.settingsEncryptionKey=MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE= \
+            --set secrets.auditHmacKey=0123456789abcdef0123456789abcdef0123 \
+            --set secrets.healthDetailsToken=0123456789abcdef0123456789abcdef \
+            --set-file keycloak.realmJson="${RUNNER_TEMP}/realm.json" >/dev/null
 
   drift:
     name: compose · chart · копии конфигов vs images.yaml
