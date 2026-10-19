@@ -448,6 +448,8 @@ services:
       # Нужен только APP_MODE=demo (вход паролем прямо из SPA): entrypoint подставляет секрет
       # в config.json. В prod-режиме образ web его не использует.
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:-crm-bff-secret}
+      # Ссылка «Почта стенда» в SPA (config.json mailUrl), когда интерфейс Mailpit открыт (MAILPIT_UI).
+      MAIL_UI_URL: ${MAILPIT_UI:+/mail/}
     security_opt:
       - no-new-privileges:true
     logging: *logging
