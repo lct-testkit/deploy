@@ -607,8 +607,9 @@ services:
     restart: unless-stopped
     environment:
       MP_WEBROOT: /mail
-      # Хранение в томе: письма переживают перезапуск и обновление стека.
-      MP_DATABASE: /data/mailpit.db
+      # Хранение в томе: письма переживают перезапуск и обновление стека. Для HA MAILPIT_DATABASE указывает на
+      # кластер rqlite (http://логин:пароль@10.10.0.X:4001, docs/ha-patroni.md): письма видны на любом лидере.
+      MP_DATABASE: ${MAILPIT_DATABASE:-/data/mailpit.db}
       # Лимит на число писем: самые старые удаляются, чтобы том не рос без границ.
       MP_MAX_MESSAGES: ${MAILPIT_MAX_MESSAGES:-1000}
       # Доступ и «только чтение» обеспечивает Caddy (MAILPIT_UI); кнопку «удалить всё» ещё и прячем.
