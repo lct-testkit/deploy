@@ -67,8 +67,14 @@ const ORGS = [
 	{ inn: inn10('780701234'), name: 'Санкт-Петербургский институт цифровой экономики', short: 'СПбИЦЭ', type: 'university', region: 'Санкт-Петербург', city: 'Санкт-Петербург', students: 8800 },
 	{ inn: inn10('772201234'), name: 'Московский открытый университет прикладных наук', short: 'МОУПН', type: 'university', region: 'Москва', city: 'Москва', students: 31000 },
 	{ inn: inn10('246301234'), name: 'Красноярский сибирский университет технологий', short: 'КСУТ', type: 'university', region: 'Красноярский', city: 'Красноярск', students: 12400 },
-	{ inn: inn10('772901234'), name: 'ООО «Цифровые кадры»', short: 'Цифровые кадры', type: 'company', region: 'Москва', city: 'Москва', students: null }
+	{ inn: inn10('772901234'), name: 'ООО «Цифровые кадры»', short: 'Цифровые кадры', type: 'company', region: 'Москва', city: 'Москва', students: null },
+	// вузы руководителя без сделок: на них менеджер просит доступ (вкладка «Запросы доступа»)
+	{ inn: inn10('720301234'), name: 'Тюменский государственный институт цифровых технологий', short: 'ТюмГИЦТ', type: 'university', region: 'Тюменская', city: 'Тюмень', students: 6200 },
+	{ inn: inn10('550101234'), name: 'Омский колледж информационных технологий', short: 'ОмКИТ', type: 'college', region: 'Омская', city: 'Омск', students: 1500 }
 ];
+
+// вузы, которые ведёт руководитель (менеджер заводит сделки по ним только после одобренного запроса доступа или через руководителя)
+const HEAD_ORGS = new Set(['МОУПН', 'УФИИ', 'ТюмГИЦТ', 'ОмКИТ']);
 
 const CONTACTS = [
 	['КГТУ', 'Ахметов', 'Ринат', 'Ильдарович', 'Проректор по цифровизации', true],
@@ -85,7 +91,23 @@ const CONTACTS = [
 	['СПбИЦЭ', 'Белова', 'Ирина', 'Олеговна', 'Проректор по развитию', true],
 	['МОУПН', 'Титов', 'Николай', 'Андреевич', 'Руководитель центра компетенций', true],
 	['КСУТ', 'Зайцева', 'Дарья', 'Максимовна', 'Начальник отдела партнёрств', false],
-	['Цифровые кадры', 'Фомин', 'Артём', 'Юрьевич', 'Генеральный директор', true]
+	['Цифровые кадры', 'Фомин', 'Артём', 'Юрьевич', 'Генеральный директор', true],
+	// вторые контакты — чтобы вкладка «Контакты» вуза не состояла из одной строки
+	['СУТИ', 'Рогов', 'Алексей', 'Павлович', 'Начальник управления информатизации', false],
+	['ППУ', 'Тихонова', 'Светлана', 'Игоревна', 'Заведующая учебной частью', false],
+	['НИЦТ', 'Белов', 'Максим', 'Олегович', 'Директор центра карьеры', false],
+	['УФИИ', 'Нургалиева', 'Динара', 'Маратовна', 'Заместитель декана по учебной работе', false],
+	['КубГАТУ', 'Левченко', 'Татьяна', 'Андреевна', 'Начальник учебного отдела', false],
+	['УАТУ', 'Исмагилов', 'Рустем', 'Фанилович', 'Руководитель центра цифровых компетенций', false],
+	['МОУПН', 'Крылова', 'Наталья', 'Дмитриевна', 'Начальник отдела дополнительного образования', false],
+	['СПбИЦЭ', 'Жуков', 'Станислав', 'Игоревич', 'Директор по партнёрствам', false],
+	['КСУТ', 'Рязанцев', 'Олег', 'Валентинович', 'Проректор по цифровой трансформации', true],
+	['ЧИПМ', 'Воронцов', 'Пётр', 'Алексеевич', 'Директор института', true],
+	['РКСИ', 'Дьяченко', 'Алла', 'Сергеевна', 'Заместитель директора по учебной работе', false],
+	['ВГКИТ', 'Мальцева', 'Ирина', 'Борисовна', 'Заведующая отделением информатики', false],
+	['ТюмГИЦТ', 'Шевцов', 'Андрей', 'Леонидович', 'Проректор по образовательной деятельности', true],
+	['ТюмГИЦТ', 'Ларионова', 'Юлия', 'Викторовна', 'Начальник отдела практики', false],
+	['ОмКИТ', 'Бондаренко', 'Галина', 'Петровна', 'Директор колледжа', true]
 ];
 
 // B2C-физлица (без организации)
@@ -444,7 +466,8 @@ const LICENSES = [
 async function ensureLicenses(orgsByShort) {
 	const vendorIds = [];
 	for (const name of LICENSE_VENDORS) {
-		const found = await get('admin', `/api/organizations?org_type=company&q=${encodeURIComponent(name.replace(/[«»]/g, '').slice(0, 14))}&limit=20`);
+		// поиск идёт по подстроке названия: по куску без кавычек («ООО Астра Лину») вендор не находился и сид падал на повторном запуске (409)
+		const found = await get('admin', `/api/organizations?org_type=company&q=${encodeURIComponent(name.match(/«(.+)»/)?.[1] ?? name)}&limit=20`);
 		let org = found.items.find((o) => o.name === name);
 		if (!org) org = await post('admin', '/api/organizations', { name, org_type: 'company', source: 'demo' }, idem());
 		vendorIds.push(org.id);
@@ -650,7 +673,11 @@ async function varyTasks() {
 			for (const task of res.items) {
 				if (!GENERIC_TASKS.has(task.title)) continue;
 				const h = Math.abs(hash(task.id));
-				await call(who, 'PATCH', `/api/tasks/${task.id}`, { title: TASK_TITLES[h % TASK_TITLES.length], priority: ['normal', 'high', 'low'][h % 3] });
+				const title = TASK_TITLES[h % TASK_TITLES.length];
+				const priority = ['normal', 'high', 'low'][h % 3];
+				// «Подготовить презентацию программы» есть и среди типовых, и среди разных названий: без этой проверки такая задача перезаписывалась на каждом прогоне
+				if (title === task.title && priority === task.priority) continue;
+				await call(who, 'PATCH', `/api/tasks/${task.id}`, { title, priority });
 				if (h % 5 === 0 && task.status === 'open') await post(who, `/api/tasks/${task.id}/complete`);
 				renamed += 1;
 			}
@@ -661,11 +688,297 @@ async function varyTasks() {
 	if (renamed) console.log(`  задач переименовано: ${renamed}`);
 }
 
+// ---------------------------------------------------------------- витрина: чтобы не было пустых списков (запросы доступа, согласования, ключи,
+// подписи, отчёты, файлы, филиалы…). Каждый блок идемпотентен (ищет по стабильному названию/адресу) и не валит весь сид: ошибка блока — предупреждение.
+const showcase = { requests: 0, approvals: 0, docs: 0, signed: 0, reports: 0, files: 0, branches: 0 };
+
+/** Вызов, который не бросает: { status, body }. */
+async function tryCall(who, method, path, body, headers = {}) {
+	try {
+		return { status: 200, body: await call(who, method, path, body, headers) };
+	} catch (e) {
+		return { status: e.status ?? 0, body: e.body ?? null, message: e.message };
+	}
+}
+
+async function block(name, fn) {
+	console.log(`${name}…`);
+	try {
+		await fn();
+	} catch (e) {
+		console.log(`  ! ${name}: ${e.message}`);
+	}
+}
+
+// запросы доступа менеджера к вузам руководителя и администратора (УФИИ, ТюмГИЦТ, ОмКИТ ведёт руководитель, ЗАО «МФТИ-НТ» — администратор):
+// ожидают решения, один отклонён, один одобрен на 30 дней. Чужие вузы по иерархии руководителю доступны, поэтому его запросы не заводим.
+async function ensureAccessRequests(orgsByShort, adminOrgId) {
+	const mine = (await get('kam', '/api/access-requests?box=mine&limit=100')).items;
+	const ask = async (orgId, reason) => {
+		const res = await tryCall('kam', 'POST', '/api/access-requests', { entity_type: 'organization', entity_id: orgId, reason }, idem());
+		if (res.status >= 300) {
+			console.log(`  ! запрос доступа: ${res.message}`);
+			return null;
+		}
+		showcase.requests += 1;
+		return res.body;
+	};
+	const plan = [
+		[orgsByShort['УФИИ']?.id, 'Нужно уточнить контакты декана перед летней ИТ-школой, прошу доступ к карточке УФИИ.', null, 'head'],
+		[adminOrgId, 'Вуз пришёл с сайта, хочу связаться с контактным лицом и завести сделку.', null, 'admin'],
+		[orgsByShort['ТюмГИЦТ']?.id, 'Веду переговоры с проректором по программе «Цифровые кафедры», нужен доступ к карточке вуза и его контактам.', { decision: 'reject', comment: 'По этому вузу работает мой отдел, давайте сначала обсудим на планёрке.' }, 'head'],
+		[orgsByShort['ОмКИТ']?.id, 'Колледж запросил КП на курс по сетям, прошу доступ к карточке, чтобы подготовить предложение.', { decision: 'approve', days: 30, comment: 'Доступ на 30 дней, КП подготовьте до конца месяца.' }, 'head']
+	];
+	for (const [orgId, reason, decision, decider] of plan) {
+		if (!orgId) continue;
+		let request = mine.find((r) => r.entity_id === orgId);
+		if (!request) request = await ask(orgId, reason);
+		if (request && decision && request.status === 'pending') await tryCall(decider, 'POST', `/api/access-requests/${request.id}/decision`, decision);
+	}
+}
+
+// «Четыре глаза»: заявки на заведение администратора. Заявка открывается ответом об ошибке «нужно второе подтверждение»; пользователь не создаётся,
+// пока инициатор не нажмёт «Выполнить» после подтверждения.
+async function ensureApprovals() {
+	const specs = [
+		{ by: 'admin', name: 'Сидоров Иван Петрович', email: 'i.sidorov@rtk-school.example', decide: null },
+		{ by: 'admin2', name: 'Кузнецова Ольга Николаевна', email: 'o.kuznetsova@rtk-school.example', decide: null },
+		{ by: 'admin', name: 'Лебедев Артём Игоревич', email: 'a.lebedev@rtk-school.example', decide: { who: 'admin2', reason: 'Сначала нужна заявка от руководителя отдела, пришлите её и повторите.' } }
+	];
+	for (const spec of specs) {
+		// без параметра `status` список отдаёт только ожидающие, поэтому решённые ищем по каждому статусу отдельно
+		const list = async () => {
+			const rows = [];
+			for (const status of ['pending', 'approved', 'rejected', 'consumed', 'expired']) rows.push(...(await get(spec.by, `/api/admin/approvals?status=${status}&limit=100`)).items);
+			return rows.filter((a) => a.payload?.email === spec.email);
+		};
+		let found = await list();
+		if (!found.some((a) => a.status !== 'expired')) {
+			await tryCall(spec.by, 'POST', '/api/admin/users', { full_name: spec.name, email: spec.email, role: 'ADMIN' }, idem());
+			found = await list();
+			if (found.some((a) => a.status === 'pending')) showcase.approvals += 1;
+		}
+		const pending = found.find((a) => a.status === 'pending');
+		if (spec.decide && pending) await tryCall(spec.decide.who, 'POST', `/api/admin/approvals/${pending.id}/reject`, { reason: spec.decide.reason });
+	}
+}
+
+async function ensureIntegrations() {
+	const users = (await get('admin', '/api/admin/users?limit=100')).items;
+	const integration = users.find((u) => u.role === 'INTEGRATION');
+	const KEY_NAME = 'Сайт школы — приём заявок';
+	const keys = await get('admin', '/api/admin/integrations/api-keys');
+	if (integration && !keys.some((k) => k.name === KEY_NAME)) {
+		await post('admin', '/api/admin/integrations/api-keys', { name: KEY_NAME, user_id: integration.id }, idem()); // ключ в ответе не сохраняем и не печатаем
+		console.log(`  + ключ «${KEY_NAME}»`);
+	}
+	const SUB_NAME = 'Сайт школы — события CRM';
+	const subs = await get('admin', '/api/admin/integrations/webhooks');
+	let sub = subs.find((s) => s.name === SUB_NAME);
+	if (!sub) {
+		// в офлайн-контейнере BASE — внутренний адрес сети compose, а подписка нужна на публичный
+		const url = `${process.env.SEED_PUBLIC_URL || BASE}/site/`;
+		sub = await post('admin', '/api/admin/integrations/webhooks', { name: SUB_NAME, url, event_types: ['DOCUMENT_SIGNED', 'DEAL_CREATED'] }, idem());
+		console.log(`  + подписка «${SUB_NAME}»`);
+		await tryCall('admin', 'POST', `/api/admin/integrations/webhooks/${sub.id}/test`);
+	}
+}
+
+async function ensureRetentionAndSettings() {
+	const runs = await get('admin', '/api/admin/retention/runs?limit=5');
+	if (!runs.items.length) {
+		await post('admin', '/api/admin/retention/run', { dry_run: true });
+		console.log('  + пробный прогон хранения (dry-run)');
+	}
+	// настройка из реально используемых: контакт для уведомления РКН (до этого в черновике стояло «не указано»)
+	const settings = await get('admin', '/api/admin/system-settings');
+	if (!settings.items.some((s) => s.key === 'pdn.rkn_contact')) {
+		await call('admin', 'PUT', '/api/admin/system-settings/pdn.rkn_contact', {
+			value: 'Ответственный за обработку персональных данных: Иванова Е. А., privacy@rtk-school.example, +7 (495) 000-00-00',
+			description: 'Контакт оператора для уведомлений Роскомнадзора об инцидентах'
+		});
+		console.log('  + настройка pdn.rkn_contact');
+	}
+}
+
+// Подписи: [кто создаёт, название сделки, название документа, подписанты (ключи me), действия [кто, sign|reject, причина]]
+const SIGN_SPECS = [
+	['head', 'Расширение программы на второй кампус', 'Согласование КП: второй кампус МОУПН', ['kam', 'admin'], [['kam', 'sign']]],
+	['head', 'Хакатон-интенсив для студентов', 'Договор-оферта: хакатон-интенсив', ['kam'], []],
+	['head', 'Пролонгация программы 2024 года', 'Согласование КП: пролонгация программы', ['kam'], [['kam', 'reject', 'Нужно пересчитать стоимость с учётом новой скидки.']]],
+	['head', 'Кибербезопасность для преподавателей', 'Согласование КП: кибербезопасность', ['admin'], []],
+	['kam', 'Курс «Кибербезопасность» для агроинженеров', 'Согласование скидки: КубГАТУ', ['admin'], [['admin', 'sign']]],
+	['kam', 'Цифровая кафедра: DevOps-трек', 'Согласование КП: цифровая кафедра НИЦТ', ['head'], []]
+];
+
+async function ensureSignatures(me) {
+	for (const [creator, dealTitle, title, signerKeys, actions] of SIGN_SPECS) {
+		const found = await get(creator, `/api/deals?q=${encodeURIComponent(dealTitle)}&limit=5`);
+		const deal = found.items.find((d) => d.title === dealTitle);
+		if (!deal) continue;
+		const docs = (await get(creator, `/api/signature-documents?entity_type=deal&entity_id=${deal.id}&limit=50`)).items;
+		let doc = docs.find((d) => d.title === title);
+		if (!doc) {
+			const created = await tryCall(creator, 'POST', '/api/signature-documents', { doc_type: 'kp', title, entity_type: 'deal', entity_id: deal.id, template_code: 'kp_approval', signers: signerKeys.map((k) => ({ user_id: me[k].id })), signing_order: 'parallel' }, idem());
+			if (created.status >= 300) {
+				console.log(`  ! документ «${title}»: ${created.message}`);
+				continue;
+			}
+			const sent = await tryCall(creator, 'POST', `/api/signature-documents/${created.body.id}/send`);
+			if (sent.status >= 300) {
+				console.log(`  ! отправка «${title}»: ${sent.message}`);
+				continue;
+			}
+			doc = sent.body;
+			showcase.docs += 1;
+		} else if (doc.status === 'draft') {
+			const sent = await tryCall(creator, 'POST', `/api/signature-documents/${doc.id}/send`);
+			if (sent.status < 300) doc = sent.body;
+		}
+		for (const [who, action, reason] of actions) {
+			const request = (doc.requests ?? []).find((r) => r.signer_user_id === me[who].id);
+			if (!request || !['sent', 'viewed'].includes(request.status)) continue;
+			await tryCall(who, 'POST', `/api/signature-requests/${request.id}/view`);
+			if (action === 'reject') {
+				await tryCall(who, 'POST', `/api/signature-requests/${request.id}/reject`, { reason });
+				continue;
+			}
+			const challenge = await tryCall(who, 'POST', `/api/signature-requests/${request.id}/challenge`);
+			if (!challenge.body?.debug_code) {
+				console.log(`  ! подпись «${title}»: стенд не отдал демо-код (${challenge.message ?? 'без debug_code'})`);
+				continue;
+			}
+			const signed = await tryCall(who, 'POST', `/api/signature-requests/${request.id}/sign`, { otp: challenge.body.debug_code });
+			if (signed.status < 300) showcase.signed += 1;
+			else console.log(`  ! подпись «${title}»: ${signed.message}`);
+		}
+	}
+}
+
+// отчёты: [кто, вид, формат]
+const REPORT_SPECS = [
+	['head', 'deal_funnel', 'xlsx'],
+	['head', 'sla_compliance', 'xlsx'],
+	['head', 'stuck_deals', 'pdf'],
+	['head', 'monthly_dynamics', 'xlsx'],
+	['kam', 'deal_register', 'xlsx'],
+	['kam', 'stuck_deals', 'xlsx']
+];
+
+async function ensureReports() {
+	const have = {};
+	for (const [who, code, format] of REPORT_SPECS) {
+		have[who] ??= (await get(who, '/api/reports?limit=100')).items;
+		if (have[who].some((r) => r.template_code === code && r.format === format)) continue;
+		const res = await tryCall(who, 'POST', '/api/reports', { template_code: code, format, params: {} }, idem());
+		if (res.status >= 300) {
+			console.log(`  ! отчёт ${code}: ${res.message}`);
+			continue;
+		}
+		showcase.reports += 1;
+	}
+}
+
+// филиалы и институты (вкладка «Филиалы»): [вуз, название, адрес, родитель]
+const BRANCHES = [
+	['КГТУ', 'Институт информационных технологий', 'г. Казань, ул. Университетская, д. 5', null],
+	['КГТУ', 'Кафедра прикладной информатики', null, 'Институт информационных технологий'],
+	['КГТУ', 'Альметьевский филиал', 'г. Альметьевск, ул. Ленина, д. 12', null],
+	['МОУПН', 'Институт цифровой экономики', 'г. Москва, Ленинградский пр-т, д. 31', null],
+	['МОУПН', 'Колледж при МОУПН', 'г. Москва, ул. Бауманская, д. 9', null],
+	['МОУПН', 'Зеленоградский филиал', 'г. Москва, Зеленоград, корп. 1801', null],
+	['УФИИ', 'Институт кибербезопасности', 'г. Екатеринбург, ул. Мира, д. 19', null],
+	['УФИИ', 'Нижнетагильский филиал', 'г. Нижний Тагил, ул. Красноармейская, д. 59', null],
+	['СУТИ', 'Факультет вычислительной техники', null, null],
+	['УАТУ', 'Институт авиационных технологий', 'г. Уфа, ул. К. Маркса, д. 12', null],
+	['УАТУ', 'Стерлитамакский филиал', 'г. Стерлитамак, пр-т Октября, д. 2', null],
+	['КСУТ', 'Институт космических и информационных технологий', 'г. Красноярск, ул. Киренского, д. 26', null],
+	['СПбИЦЭ', 'Высшая школа цифровых сервисов', 'г. Санкт-Петербург, наб. реки Мойки, д. 36', null],
+	['КубГАТУ', 'Факультет прикладной информатики', 'г. Краснодар, ул. Калинина, д. 13', null],
+	['ЧИПМ', 'Институт математического моделирования', 'г. Челябинск, пр-т Ленина, д. 76', null],
+	['РКСИ', 'Отделение сетевых технологий', 'г. Ростов-на-Дону, ул. Пушкинская, д. 140', null],
+	['НИЦТ', 'Лаборатория больших данных', 'г. Новосибирск, пр-т Академика Лаврентьева, д. 6', null],
+	['ППУ', 'Институт непрерывного образования', null, null],
+	['ВГКИТ', 'Отделение программирования', 'г. Воронеж, ул. Плехановская, д. 53', null],
+	['Цифровые кадры', 'Офис в Санкт-Петербурге', 'г. Санкт-Петербург, Невский пр-т, д. 90', null]
+];
+
+async function ensureBranches(orgsByShort, ownerByShort) {
+	const cache = {};
+	for (const [short, name, address, parentName] of BRANCHES) {
+		const org = orgsByShort[short];
+		if (!org) continue;
+		const who = ownerByShort[short] ?? 'kam';
+		cache[short] ??= (await get(who, `/api/organizations/${org.id}/branches`)).items;
+		if (cache[short].some((b) => b.name === name)) continue;
+		const parent = parentName ? cache[short].find((b) => b.name === parentName) : null;
+		const res = await tryCall(who, 'POST', `/api/organizations/${org.id}/branches`, { name, address, parent_id: parent?.id ?? null });
+		if (res.status >= 300) {
+			console.log(`  ! филиал «${name}»: ${res.message}`);
+			continue;
+		}
+		cache[short].push(res.body);
+		showcase.branches += 1;
+	}
+}
+
+// файлы сделок и вузов: [кто, 'deal'|'organization', название сделки / короткое имя вуза, категория, имя файла]
+const FILE_SPECS = [
+	['kam', 'deal', 'Программа «Разработка на Python» для 3 курса', 'contract', 'Договор_Python_3курс.pdf'],
+	['kam', 'deal', 'Программа «Разработка на Python» для 3 курса', 'presentation', 'Презентация_программы.pdf'],
+	['kam', 'deal', 'Цифровая кафедра: DevOps-трек', 'presentation', 'КП_DevOps-трек.pdf'],
+	['kam', 'deal', 'Цифровая кафедра: DevOps-трек', 'other', 'Список_групп.pdf'],
+	['kam', 'deal', 'Курс «Кибербезопасность» для агроинженеров', 'contract', 'Договор_КубГАТУ.pdf'],
+	['kam', 'deal', 'Трек «Промышленный интернет вещей»', 'presentation', 'Программа_IoT.pdf'],
+	['kam', 'deal', 'Курс «Машинное обучение» — 2025/26', 'act', 'Акт_ML_2025.pdf'],
+	['head', 'deal', 'Расширение программы на второй кампус', 'contract', 'Допсоглашение_кампус.pdf'],
+	['head', 'deal', 'Расширение программы на второй кампус', 'presentation', 'Презентация_кампус.pdf'],
+	['head', 'deal', 'Пролонгация программы 2024 года', 'act', 'Акт_пролонгация.pdf'],
+	['head', 'deal', 'Хакатон-интенсив для студентов', 'other', 'Регламент_хакатона.pdf'],
+	['kam', 'organization', 'КГТУ', 'contract', 'Рамочный_договор_КГТУ.pdf'],
+	['kam', 'organization', 'СУТИ', 'other', 'Карточка_партнёра_СУТИ.pdf'],
+	['kam', 'organization', 'ППУ', 'presentation', 'Презентация_для_ППУ.pdf'],
+	['kam', 'organization', 'КСУТ', 'license', 'Лицензионное_соглашение_КСУТ.pdf'],
+	['head', 'organization', 'МОУПН', 'contract', 'Рамочный_договор_МОУПН.pdf'],
+	['head', 'organization', 'УФИИ', 'other', 'Соглашение_о_сотрудничестве_УФИИ.pdf'],
+	['kam', 'organization', 'ЧИПМ', 'contract', 'Договор_о_сотрудничестве_ЧИПМ.pdf'],
+	['kam', 'organization', 'РКСИ', 'presentation', 'Презентация_для_РКСИ.pdf'],
+	['kam', 'organization', 'НИЦТ', 'other', 'Реквизиты_НИЦТ.pdf'],
+	['kam', 'organization', 'СПбИЦЭ', 'contract', 'Рамочный_договор_СПбИЦЭ.pdf'],
+	['kam', 'organization', 'ВГКИТ', 'other', 'Письмо_о_намерениях_ВГКИТ.pdf'],
+	['kam', 'organization', 'КубГАТУ', 'contract', 'Договор_КубГАТУ_общий.pdf'],
+	['kam', 'organization', 'УАТУ', 'presentation', 'Презентация_для_УАТУ.pdf'],
+	['kam', 'organization', 'Цифровые кадры', 'contract', 'Договор_с_партнёром.pdf']
+];
+
+async function ensureFiles(orgsByShort) {
+	const clients = {};
+	for (const [who, kind, subject, category, name] of FILE_SPECS) {
+		let entityId;
+		if (kind === 'deal') {
+			const found = await get(who, `/api/deals?q=${encodeURIComponent(subject)}&limit=5`);
+			entityId = found.items.find((d) => d.title === subject)?.id;
+		} else {
+			entityId = orgsByShort[subject]?.id;
+		}
+		if (!entityId) continue;
+		const list = (await get(who, `/api/attachments?entity_type=${kind}&entity_id=${entityId}&limit=50`)).items;
+		if (list.some((a) => a.description === name || a.file?.original_filename === name)) continue;
+		try {
+			clients[who] ??= await apiAs(who);
+			await attachPdf(clients[who], entityId, category, name, kind);
+			showcase.files += 1;
+		} catch (e) {
+			console.log(`  ! файл «${name}»: ${e.message}`);
+		}
+	}
+}
+
 async function main() {
 	console.log(`Сид демо-данных → ${BASE}`);
 	// первым запросом каждого пользователя обязан быть GET /api/me: он создаёт локальную запись (JIT) и не требует согласия на ПДн
-	for (const who of ['admin', 'head', 'kam', 'auditor']) await login(who);
-	const me = { kam: await get('kam', '/api/me'), head: await get('head', '/api/me') };
+	for (const who of ['admin', 'admin2', 'head', 'kam', 'auditor']) await login(who);
+	const me = { kam: await get('kam', '/api/me'), head: await get('head', '/api/me'), admin: await get('admin', '/api/me') };
 
 	console.log('Команда…');
 	await ensureTeam(me);
@@ -689,7 +1002,7 @@ async function main() {
 	console.log(`  B2B: «${graphs.b2b.workflow.name}», шагов ${b2bFlow.steps.length}`);
 
 	console.log('Организации…');
-	const ownerOf = (org) => (org.short === 'МОУПН' || org.short === 'УФИИ' ? 'head' : 'kam');
+	const ownerOf = (org) => (HEAD_ORGS.has(org.short) ? 'head' : 'kam');
 	const ownerByShort = Object.fromEntries(ORGS.map((org) => [org.short, ownerOf(org)]));
 	const orgsByShort = await ensureOrganizations(regionsByName, ownerOf);
 	console.log(`  организаций: ${Object.keys(orgsByShort).length} (новых ${summary.orgs})`);
@@ -788,7 +1101,19 @@ async function main() {
 	console.log('Задачи…');
 	await varyTasks();
 
-	console.log('Готово:', JSON.stringify(summary));
+	await block('Филиалы и институты', () => ensureBranches(orgsByShort, ownerByShort));
+	await block('Файлы сделок и вузов', () => ensureFiles(orgsByShort));
+	await block('Интеграции: ключ и подписка', ensureIntegrations);
+	await block('Запросы доступа', async () => {
+		const adminOrg = (await get('admin', '/api/organizations?q=%D0%9C%D0%A4%D0%A2%D0%98&limit=10')).items.find((o) => o.owner_id === me.admin.id);
+		await ensureAccessRequests(orgsByShort, adminOrg?.id ?? null);
+	});
+	await block('Согласования «четыре глаза»', ensureApprovals);
+	await block('Подписание', () => ensureSignatures(me));
+	await block('Отчёты', ensureReports);
+	await block('Хранение и системные настройки', ensureRetentionAndSettings);
+
+	console.log('Готово:', JSON.stringify({ ...summary, ...showcase }));
 }
 
 main().catch((e) => {

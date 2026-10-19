@@ -1,6 +1,7 @@
 // Помощники сценариев спринта F3: сделка в воронке по умолчанию (14 шагов), доведённая до нужного шага, и загрузка PDF в сделку цепочкой API
 // (upload-intent -> PUT в хранилище -> commit -> POST /api/attachments). Файловые условия `step_attachments.*` закрываются приложенным PDF.
 import http from 'node:http';
+import https from 'node:https';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,8 +29,16 @@ export async function apiAs(role) {
 // предварительно подписанный URL хранилища подписывает content-type, поэтому он обязателен; fetch Node добавляет лишние заголовки
 function putRaw(url, body) {
 	return new Promise((resolve, reject) => {
-		const u = new URL(url);
-		const req = http.request({ method: 'PUT', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'Content-Length': body.length, 'Content-Type': 'application/pdf' } }, (res) => {
+		let u = new URL(url);
+		const headers = { 'Content-Length': body.length, 'Content-Type': 'application/pdf' };
+		// в офлайн-контейнере публичный адрес хранилища недоступен: идём в seaweedfs напрямую, Host остаётся публичным (подпись SigV4 считается по нему)
+		const pub = process.env.SEED_S3_PUBLIC_URL;
+		const internal = process.env.SEED_S3_INTERNAL_URL;
+		if (pub && internal && url.startsWith(pub)) {
+			headers.Host = u.host;
+			u = new URL(u.pathname + u.search, internal);
+		}
+		const req = (u.protocol === 'https:' ? https : http).request({ method: 'PUT', hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers }, (res) => {
 			let t = '';
 			res.on('data', (c) => (t += c));
 			res.on('end', () => (res.statusCode < 300 ? resolve() : reject(new Error(`PUT в хранилище: ${res.statusCode} ${t.slice(0, 200)}`))));
@@ -39,15 +48,15 @@ function putRaw(url, body) {
 	});
 }
 
-/** Загрузить PDF и привязать к сделке; возвращает id вложения. */
-export async function attachPdf(j, dealId, category, name = `${category}.pdf`) {
+/** Загрузить PDF и привязать к сделке (или к другой сущности: `entityType`); возвращает id вложения. */
+export async function attachPdf(j, dealId, category, name = `${category}.pdf`, entityType = 'deal') {
 	const intent = await j('/api/files/upload-intent', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ filename: name, size_bytes: pdf.length, mime_type: 'application/pdf', category }) });
 	if (intent.status >= 300) throw new Error('upload-intent: ' + JSON.stringify(intent.body).slice(0, 200));
 	await putRaw(intent.body.upload_url, pdf);
 	const commit = await j(`/api/files/${intent.body.file_id}/commit`, { method: 'POST', body: JSON.stringify({ sha256: null }) });
 	if (commit.status >= 300) throw new Error('commit: ' + JSON.stringify(commit.body).slice(0, 200));
 	for (let i = 0; i < 6; i += 1) {
-		const a = await j('/api/attachments', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ file_id: intent.body.file_id, entity_type: 'deal', entity_id: dealId, category, description: name }) });
+		const a = await j('/api/attachments', { method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ file_id: intent.body.file_id, entity_type: entityType, entity_id: dealId, category, description: name }) });
 		if (a.status < 300) return a.body.id;
 		if (!/не прошёл проверку/.test(JSON.stringify(a.body))) throw new Error('attachments: ' + JSON.stringify(a.body).slice(0, 200));
 		await new Promise((r) => setTimeout(r, 2000));
