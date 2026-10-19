@@ -111,3 +111,8 @@ export async function ensureConsent(who, tokens) {
 		body: JSON.stringify({ policy_version: policy.version, policy_text_hash: policy.text_hash ?? 'a'.repeat(64) })
 	});
 }
+
+/** Шаги воронки по порядку из графа (`GET /api/workflows/{id}`): без архивных и терминальных, шаг N — `steps[N - 1]`. */
+export function graphSteps(graph) {
+	return graph.statuses.filter((s) => !s.is_archived && (s.type === 'initial' || s.type === 'intermediate')).sort((a, b) => a.sort_order - b.sort_order);
+}

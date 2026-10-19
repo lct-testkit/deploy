@@ -14,6 +14,8 @@
 #   frontend/tools/seed-demo.mjs                        -> seed/seed-demo.mjs
 #   frontend/tools/scenarios/b-seed-catalogs.mjs        -> seed/catalogs.mjs
 #   frontend/tools/scenarios/lead-seed-erasure.mjs      -> seed/erasure.mjs
+#   frontend/tools/scenarios/f-lib.mjs                  -> seed/f-lib.mjs   (apiAs, attachPdf для сделок на шагах воронки)
+#   frontend/tools/fixtures/contract.pdf                -> seed/fixtures/contract.pdf
 #   frontend/tools/lib.mjs (выжимка)                    -> seed/lib.mjs
 set -euo pipefail
 
@@ -42,7 +44,7 @@ lf() { tr -d '\r'; }
 # Урезанный lib.mjs: строки берём из frontend по маркерам. Если маркер пропал (файл
 # перестроили), падаем громко, а не пишем пустой хелпер.
 gen_lib() {
-  local src="${TOOLS}/lib.mjs" base accounts session
+  local src="${TOOLS}/lib.mjs" base accounts session steps
   base="$(lf < "${src}" | grep -m1 '^export const BASE ')" || true
   accounts="$(lf < "${src}" | awk '/^export const ACCOUNTS = \{/ {f=1} f {print} f && /^};/ {exit}')"
   session="$(lf < "${src}" | awk '
@@ -50,16 +52,17 @@ gen_lib() {
     f {print}
     /^export async function ensureConsent\(/ {g=1}
     g && /^}$/ {exit}')"
-  [[ -n "${base}" && -n "${accounts}" && -n "${session}" ]] \
-    || { echo "не нашёл BASE/ACCOUNTS/tokensFor/ensureConsent в ${src}: структура lib.mjs изменилась, поправьте scripts/sync_seed.sh" >&2; return 1; }
+  steps="$(lf < "${src}" | awk '/^\/\*\* Шаги воронки/ {f=1} f {print} f && /^}$/ {exit}')"
+  [[ -n "${base}" && -n "${accounts}" && -n "${session}" && -n "${steps}" ]] \
+    || { echo "не нашёл BASE/ACCOUNTS/tokensFor/ensureConsent/graphSteps в ${src}: структура lib.mjs изменилась, поправьте scripts/sync_seed.sh" >&2; return 1; }
   # Преамбула (подмена адреса для работы внутри сети compose) лежит отдельным файлом — её можно проверять node --check.
   lf < "${SCRIPT_DIR}/seed_lib_preamble.mjs"
-  printf '%s\n%s\n\n%s\n' "${base}" "${accounts}" "${session}"
+  printf '%s\n%s\n\n%s\n\n%s\n' "${base}" "${accounts}" "${session}" "${steps}"
 }
 
-# Скрипт-сид с заменой единственной строки импорта.
+# Скрипт-сид с заменой путей: в seed/ все файлы лежат рядом (lib.mjs, f-lib.mjs, fixtures/).
 gen_script() {
-  lf < "$1" | sed "s|from '../lib.mjs'|from './lib.mjs'|"
+  lf < "$1" | sed -e "s|from '../lib.mjs'|from './lib.mjs'|"     -e "s|from './scenarios/f-lib.mjs'|from './f-lib.mjs'|"     -e "s|join(here, '..', 'fixtures', |join(here, 'fixtures', |"
 }
 
 # имя в seed/ : источник во frontend
@@ -67,13 +70,16 @@ FILES=(
   "seed-demo.mjs:${TOOLS}/seed-demo.mjs"
   "catalogs.mjs:${TOOLS}/scenarios/b-seed-catalogs.mjs"
   "erasure.mjs:${TOOLS}/scenarios/lead-seed-erasure.mjs"
+  "f-lib.mjs:${TOOLS}/scenarios/f-lib.mjs"
 )
+PDF_SRC="${TOOLS}/fixtures/contract.pdf"
+[[ -f "${PDF_SRC}" ]] || { echo "нет источника ${PDF_SRC}" >&2; exit 1; }
 
 for entry in "${FILES[@]}"; do
   [[ -f "${entry#*:}" ]] || { echo "нет источника ${entry#*:}" >&2; exit 1; }
 done
 
-mkdir -p "${SEED_DIR}"
+mkdir -p "${SEED_DIR}/fixtures"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
@@ -81,9 +87,11 @@ gen_lib > "${TMP}/lib.mjs"
 for entry in "${FILES[@]}"; do
   gen_script "${entry#*:}" > "${TMP}/${entry%%:*}"
 done
+mkdir -p "${TMP}/fixtures"
+cp "${PDF_SRC}" "${TMP}/fixtures/contract.pdf"
 
 status=0
-for f in lib.mjs "${FILES[@]%%:*}"; do
+for f in lib.mjs "${FILES[@]%%:*}" fixtures/contract.pdf; do
   if [[ "${CHECK}" == 1 ]]; then
     if ! cmp -s "${TMP}/${f}" "${SEED_DIR}/${f}" 2>/dev/null; then
       echo "РАСХОЖДЕНИЕ: seed/${f} не совпадает с frontend (запустите scripts/sync_seed.sh --frontend-dir ${FRONTEND_DIR})" >&2
