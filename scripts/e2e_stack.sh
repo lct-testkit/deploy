@@ -137,7 +137,9 @@ if [[ "${PROFILE}" == prod ]]; then
   mig="$(dc ps -a --format '{{.ExitCode}}' migrate | head -1)"
   [[ "${mig}" == 0 ]] || { echo "ОШИБКА: migrate завершился с кодом ${mig:-?}" >&2; exit 1; }
   # Пользователи realm crm через консоль Keycloak (admin-cli, realm master) — тем же путём, каким пользуется оператор.
-  kc_token="$(curl -fsS -d client_id=admin-cli -d grant_type=password -d username="$(env_val KEYCLOAK_ADMIN)"     --data-urlencode password="$(env_val KEYCLOAK_ADMIN_PASSWORD)" "${BASE}/auth/realms/master/protocol/openid-connect/token"     | sed -n 's/.*"access_token":"\([^"]*\)".*//p')"
+  kc_token="$(curl -fsS -d client_id=admin-cli -d grant_type=password -d username="$(env_val KEYCLOAK_ADMIN)" \
+    --data-urlencode password="$(env_val KEYCLOAK_ADMIN_PASSWORD)" "${BASE}/auth/realms/master/protocol/openid-connect/token" \
+    | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p')"
   [[ -n "${kc_token}" ]] || { echo "ОШИБКА: не получил токен администратора Keycloak" >&2; exit 1; }
   users="$(curl -fsS -H "Authorization: Bearer ${kc_token}" "${BASE}/auth/admin/realms/crm/users?max=100")"
   for demo in admin.crm admin.volkov head.petrov kam.ivanov auditor.smirnov; do

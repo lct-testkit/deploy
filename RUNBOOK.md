@@ -282,7 +282,7 @@ $DC exec -T postgres pg_restore -U crm -d crm      --no-owner < "$BK/crm.dump"  
 $DC exec -T postgres pg_restore -U crm -d keycloak --no-owner < "$BK/keycloak.dump"
 
 $DC up -d --wait --pull never                       # 5. поднять всё; migrate доводит схему до версии образов
-bash scripts/smoke.sh --env-file compose/.env       # 6. smoke
+bash scripts/smoke.sh "http://localhost:$(grep ^HTTP_PORT= compose/.env | cut -d= -f2)" --env-file compose/.env   # 6. smoke
 ```
 
 Имена баз и пользователя — `POSTGRES_DB` (по умолчанию `crm`) и `POSTGRES_USER` (`crm`) из `.env`; у стенда с `-p <проект>` добавьте `-p` в `DC`. Сверьте, что вернулись нужные данные (например, `$DC exec -T postgres psql -U crm -d crm -c 'select count(*) from deals'` против `counts.tsv` бэкапа). Файлы SeaweedFS лежат в `seaweed_data.tgz`; если они тоже потеряны: `$DC stop seaweedfs`, затем `docker run --rm --entrypoint tar -v <проект>_seaweed_data:/data -v "$BK":/backup <образ seaweedfs из .env.images> xzf /backup/seaweed_data.tgz -C /data` и `$DC up -d --wait --pull never` (эта часть в проверке не гонялась — сверяйте файлы в CRM после неё). Бэкап снимает базы ЦЕЛИКОМ, включая пользователей CRM и Keycloak: после восстановления пароли и сессии такие, какими были на момент бэкапа. Если восстанавливаете на другой хост, `BASE_URL`/realm возьмите у нового стенда (`scripts/set_host.sh`), не из старого `.env`.
