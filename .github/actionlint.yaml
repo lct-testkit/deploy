@@ -6,3 +6,5 @@ self-hosted-runner:
   # (repo Settings -> Actions -> Runners) rather than assuming from this comment.
   labels:
     - lct
+    # x86_64-раннер на узле n3 (Казань) только для сборки образа сайта (build.yml): без метки lct.
+    - lct-x64
