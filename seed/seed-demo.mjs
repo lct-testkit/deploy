@@ -101,35 +101,36 @@ const PERSONS = [
 ];
 
 // Сделки: [владелец, тип, организация/контакт, название, сумма, студентов, приоритет, целевой статус, дней до закрытия]
+// Коды B2B — воронка b2b_university_v2 (14 шагов, по умолчанию), B2C — b2c_individual_v1.
 const DEALS = [
-	['kam', 'b2b', 'КГТУ', 'Программа «Разработка на Python» для 3 курса', '1250000', 120, 'high', 'kp_approval', 45],
-	['kam', 'b2b', 'СУТИ', 'Курс по сетевым технологиям для магистратуры', '840000', 60, 'normal', 'meeting_held', 60],
-	['kam', 'b2b', 'ППУ', 'Пилот «Основы Data Science»', '390000', 40, 'normal', 'qualification', 90],
-	['kam', 'b2b', 'НИЦТ', 'Цифровая кафедра: DevOps-трек', '2100000', 150, 'critical', 'legal_approval', 30],
-	['kam', 'b2b', 'УФИИ', 'Летняя ИТ-школа для абитуриентов', '560000', 200, 'normal', 'requirements', 75],
-	['kam', 'b2b', 'КубГАТУ', 'Курс «Кибербезопасность» для агроинженеров', '720000', 80, 'high', 'contract_signing', 20],
-	['kam', 'b2b', 'РКСИ', 'Программа переподготовки преподавателей', '310000', 25, 'low', 'first_contact', 120],
-	['kam', 'b2b', 'УАТУ', 'Трек «Промышленный интернет вещей»', '1650000', 90, 'high', 'lms_transfer', 15],
+	['kam', 'b2b', 'КГТУ', 'Программа «Разработка на Python» для 3 курса', '1250000', 120, 'high', 'documents_exchange', 45],
+	['kam', 'b2b', 'СУТИ', 'Курс по сетевым технологиям для магистратуры', '840000', 60, 'normal', 'meeting', 60],
+	['kam', 'b2b', 'ППУ', 'Пилот «Основы Data Science»', '390000', 40, 'normal', 'communication', 90],
+	['kam', 'b2b', 'НИЦТ', 'Цифровая кафедра: DevOps-трек', '2100000', 150, 'critical', 'documents_correction', 30],
+	['kam', 'b2b', 'УФИИ', 'Летняя ИТ-школа для абитуриентов', '560000', 200, 'normal', 'curriculum_update', 75],
+	['kam', 'b2b', 'КубГАТУ', 'Курс «Кибербезопасность» для агроинженеров', '720000', 80, 'high', 'signing', 20],
+	['kam', 'b2b', 'РКСИ', 'Программа переподготовки преподавателей', '310000', 25, 'low', 'contact_search', 120],
+	['kam', 'b2b', 'УАТУ', 'Трек «Промышленный интернет вещей»', '1650000', 90, 'high', 'implementation_support', 15],
 	['kam', 'b2b', 'ЧИПМ', 'Курс «Машинное обучение» — 2025/26', '480000', 35, 'normal', 'lost', 40],
 	['kam', 'b2b', 'ВГКИТ', 'Стажировочная программа для выпускников', '150000', 30, 'low', 'parked', 180],
-	['kam', 'b2b', 'СПбИЦЭ', 'Обучение сотрудников университета работе с LMS', '290000', 50, 'normal', 'identification', 100],
-	['kam', 'b2b', 'МОУПН', 'Партнёрская программа «Цифровые кафедры 2026»', '3400000', 400, 'critical', 'training_launch', 10],
-	['kam', 'b2b', 'КСУТ', 'Курс по мобильной разработке', '610000', 45, 'normal', 'kp_preparation', 55],
-	['kam', 'b2b', 'Цифровые кадры', 'Корпоративное обучение аналитиков данных', '990000', 20, 'high', 'meeting_scheduled', 35],
+	['kam', 'b2b', 'СПбИЦЭ', 'Обучение сотрудников университета работе с LMS', '290000', 50, 'normal', 'contact_search', 100],
+	['kam', 'b2b', 'МОУПН', 'Партнёрская программа «Цифровые кафедры 2026»', '3400000', 400, 'critical', 'teacher_training', 10],
+	['kam', 'b2b', 'КСУТ', 'Курс по мобильной разработке', '610000', 45, 'normal', 'docs_update', 55],
+	['kam', 'b2b', 'Цифровые кадры', 'Корпоративное обучение аналитиков данных', '990000', 20, 'high', 'meeting', 35],
 	['kam', 'b2c', 'Смирнова', 'Frontend-разработчик с нуля — Смирнова Е. А.', '89000', 1, 'normal', 'consultation', 14],
 	['kam', 'b2c', 'Волков', 'Data Science Pro — Волков П. Д.', '129000', 1, 'normal', 'won', 7],
 	['kam', 'b2c', 'Егорова', 'Python для анализа данных — Егорова А. Р.', '59000', 1, 'low', 'contact_verification', 21],
-	['head', 'b2b', 'МОУПН', 'Расширение программы на второй кампус', '1800000', 160, 'high', 'monitoring', 25],
-	['head', 'b2b', 'УФИИ', 'Хакатон-интенсив для студентов', '240000', 300, 'normal', 'closing_prolongation', 12],
+	['head', 'b2b', 'МОУПН', 'Расширение программы на второй кампус', '1800000', 160, 'high', 'classes', 25],
+	['head', 'b2b', 'УФИИ', 'Хакатон-интенсив для студентов', '240000', 300, 'normal', 'execution_control', 12],
 	['head', 'b2b', 'КГТУ', 'Пролонгация программы 2024 года', '1100000', 110, 'normal', 'won', 5],
 	// вторая волна: ранние статусы с короткими SLA (Истекает / Нарушен) и больше B2C
-	['kam', 'b2b', 'СУТИ', 'Модуль «Облачные технологии» для бакалавриата', '430000', 70, 'high', 'first_contact', 50],
-	['kam', 'b2b', 'ППУ', 'Курс «Тестирование программного обеспечения»', '380000', 45, 'normal', 'qualification', 65],
-	['kam', 'b2b', 'НИЦТ', 'Стажировки для студентов 4 курса', '270000', 60, 'normal', 'meeting_scheduled', 40],
-	['kam', 'b2b', 'КубГАТУ', 'Летняя школа по робототехнике', '520000', 90, 'low', 'first_contact', 85],
-	['kam', 'b2b', 'РКСИ', 'Сетевая академия: расширение программы', '340000', 30, 'normal', 'qualification', 70],
-	['head', 'b2b', 'КГТУ', 'Кибербезопасность для преподавателей', '410000', 40, 'high', 'meeting_scheduled', 30],
-	['head', 'b2b', 'УФИИ', 'Цифровая кафедра: анализ данных', '1350000', 120, 'critical', 'qualification', 55],
+	['kam', 'b2b', 'СУТИ', 'Модуль «Облачные технологии» для бакалавриата', '430000', 70, 'high', 'contact_search', 50],
+	['kam', 'b2b', 'ППУ', 'Курс «Тестирование программного обеспечения»', '380000', 45, 'normal', 'communication', 65],
+	['kam', 'b2b', 'НИЦТ', 'Стажировки для студентов 4 курса', '270000', 60, 'normal', 'meeting', 40],
+	['kam', 'b2b', 'КубГАТУ', 'Летняя школа по робототехнике', '520000', 90, 'low', 'contact_search', 85],
+	['kam', 'b2b', 'РКСИ', 'Сетевая академия: расширение программы', '340000', 30, 'normal', 'lost', 70],
+	['head', 'b2b', 'КГТУ', 'Кибербезопасность для преподавателей', '410000', 40, 'high', 'meeting', 30],
+	['head', 'b2b', 'УФИИ', 'Цифровая кафедра: анализ данных', '1350000', 120, 'critical', 'communication', 55],
 	['kam', 'b2c', 'Назаров', 'DevOps с нуля — Назаров И. С.', '99000', 1, 'normal', 'lms_enrollment', 10],
 	['kam', 'b2c', 'Кузьмина', 'Аналитик данных — Кузьмина Т. В.', '109000', 1, 'low', 'lost', 12],
 	['kam', 'b2c', 'Тарасов', 'Java-разработчик — Тарасов А. М.', '119000', 1, 'high', 'payment_contract', 9],
@@ -137,11 +138,11 @@ const DEALS = [
 	['kam', 'b2c', 'Беляева', 'Python-старт — Беляева М. С.', '45000', 1, 'normal', 'contact_verification', 18],
 	['head', 'b2c', 'Гусев', 'Тестировщик ПО — Гусев К. О.', '69000', 1, 'low', 'training_completed', 6],
 	// третья волна: короткие SLA на ранних статусах — сделки быстро уходят в «Истекает» и «Нарушен»
-	['kam', 'b2b', 'КГТУ', 'Пилот по кибербезопасности для магистров', '260000', 35, 'high', 'first_contact', 60],
-	['kam', 'b2b', 'СУТИ', 'Курс «Сети 5G» для бакалавров', '310000', 40, 'normal', 'qualification', 70],
-	['head', 'b2b', 'ППУ', 'Летняя практика для студентов ИТ-института', '180000', 60, 'normal', 'meeting_scheduled', 45],
-	['kam', 'b2b', 'УАТУ', 'Программа «Умное производство»', '890000', 75, 'critical', 'qualification', 50],
-	['kam', 'b2b', 'ЧИПМ', 'Введение в анализ данных для преподавателей', '145000', 25, 'low', 'first_contact', 90],
+	['kam', 'b2b', 'КГТУ', 'Пилот по кибербезопасности для магистров', '260000', 35, 'high', 'contact_search', 60],
+	['kam', 'b2b', 'СУТИ', 'Курс «Сети 5G» для бакалавров', '310000', 40, 'normal', 'communication', 70],
+	['head', 'b2b', 'ППУ', 'Летняя практика для студентов ИТ-института', '180000', 60, 'normal', 'teacher_qualification', 45],
+	['kam', 'b2b', 'УАТУ', 'Программа «Умное производство»', '890000', 75, 'critical', 'materials_transfer', 50],
+	['kam', 'b2b', 'ЧИПМ', 'Введение в анализ данных для преподавателей', '145000', 25, 'low', 'contact_search', 90],
 	['kam', 'b2c', 'Егорова', 'SQL и базы данных — Егорова А. Р.', '39000', 1, 'low', 'consultation', 10]
 ];
 
@@ -221,7 +222,7 @@ async function ensureReferenceData() {
 
 // Короткие календарные сроки на ранних статусах: свежие демо-сделки там быстро становятся «Истекает» / «Нарушен».
 // Остальные промежуточные статусы — 72 рабочих часа, начальный — 24.
-const SLA_SHORT_HOURS = { first_contact: 0.05, qualification: 0.15, meeting_scheduled: 1, contact_verification: 0.05, consultation: 1.5 };
+const SLA_SHORT_HOURS = { contact_search: 0.05, communication: 0.15, meeting: 1, contact_verification: 0.05, consultation: 1.5 };
 
 function wantedSla(graph) {
 	return graph.statuses
@@ -436,6 +437,29 @@ function pathTo(graph, fromId, toCode) {
 	return steps;
 }
 
+/** Категории вложений `step_attachments.*`, которых требует условие перехода (all/any/лист). */
+function requiredAttachmentCategories(conditions) {
+	if (!conditions || typeof conditions !== 'object') return [];
+	if (Array.isArray(conditions.all)) return conditions.all.flatMap(requiredAttachmentCategories);
+	if (Array.isArray(conditions.any)) return conditions.any.flatMap(requiredAttachmentCategories);
+	if (typeof conditions.field === 'string' && conditions.field.startsWith('step_attachments.')) return [conditions.field.slice('step_attachments.'.length)];
+	return [];
+}
+
+// Минимальный валидный PDF (проходит проверку magic bytes): демо-вложение «Договор»/«Акт» на шаге воронки.
+const DEMO_PDF = Buffer.from(['%PDF-1.4', '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj', '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj', '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj', 'trailer<</Root 1 0 R>>', '%%EOF', ''].join('\n'), 'latin1');
+const CATEGORY_FILENAMES = { contract: 'dogovor-demo.pdf', act: 'akt-demo.pdf' };
+
+/** Прикладывает к сделке демо-файл категории на текущем шаге (условия `step_attachments.*` ждут вложение именно здесь). */
+async function attachDemoFile(who, deal, category) {
+	const filename = CATEGORY_FILENAMES[category] ?? `${category}-demo.pdf`;
+	const intent = await post(who, '/api/files/upload-intent', { filename, size_bytes: DEMO_PDF.length, mime_type: 'application/pdf', purpose: 'deal_attachment', category }, idem());
+	const put = await fetch(intent.upload_url, { method: 'PUT', headers: { 'Content-Type': 'application/pdf', ...(intent.upload_headers ?? {}) }, body: DEMO_PDF });
+	if (!put.ok) throw new Error(`PUT вложения → ${put.status}`);
+	await post(who, `/api/files/${intent.file_id}/commit`, {});
+	await post(who, '/api/attachments', { file_id: intent.file_id, entity_type: 'deal', entity_id: deal.id, category, description: 'Демо-файл' }, idem());
+}
+
 async function walk(who, deal, graph, targetCode, lossReasonId) {
 	const steps = pathTo(graph, deal.status_id, targetCode);
 	if (!steps) {
@@ -451,6 +475,12 @@ async function walk(who, deal, graph, targetCode, lossReasonId) {
 		if (status.code === 'consultation') body.fields['custom_fields.contact_verified'] = true;
 		if (status.code === 'lms_enrollment') body.fields['custom_fields.payment_confirmed'] = true;
 		try {
+			for (const category of new Set(requiredAttachmentCategories(transition.conditions))) await attachDemoFile(who, current, category);
+			// Вложение меняет версию сделки не всегда, но перечитываем: If-Match должен совпасть с актуальной версией.
+			if (requiredAttachmentCategories(transition.conditions).length) {
+				const fresh = await get(who, `/api/deals/${current.id}`);
+				current = fresh.deal ?? fresh;
+			}
 			const res = await post(who, `/api/deals/${current.id}/transition`, body, ifMatch(current.version));
 			current = res.deal;
 			summary.transitions += 1;
