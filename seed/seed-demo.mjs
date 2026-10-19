@@ -2,7 +2,8 @@
 // в организации, сделки — по названию; повторный запуск ничего не дублирует, переходы делаются только для новых сделок.
 //   node tools/seed-demo.mjs            (по умолчанию http://localhost:5273 → прокси на бэкенд)
 //   APP_URL=http://localhost:8080 node tools/seed-demo.mjs
-import { BASE, accessToken, ensureConsent } from './lib.mjs';
+import { BASE, accessToken, ensureConsent, graphSteps } from './lib.mjs';
+import { apiAs, attachPdf } from './f-lib.mjs';
 
 // ---------------------------------------------------------------- HTTP
 const tokens = {};
@@ -100,37 +101,39 @@ const PERSONS = [
 	['Гусев', 'Кирилл', 'Олегович', 'gusev.ko@example.ru', '+79161234509', 'head']
 ];
 
-// Сделки: [владелец, тип, организация/контакт, название, сумма, студентов, приоритет, целевой статус, дней до закрытия]
-// Коды B2B — воронка b2b_university_v2 (14 шагов, по умолчанию), B2C — b2c_individual_v1.
+// Сделки: [владелец, тип, организация/контакт, название, сумма, студентов, приоритет, цель, дней до закрытия].
+// Цель B2B-сделки — номер шага из задания, а не код статуса: `{ step: 8 }`; `back: true` — дойти до шага и вернуться на шаг назад;
+// `{ end: 'lost' | 'parked' | 'won', at: N }` — закрыть с шага N. Цель B2C — код статуса воронки B2C.
+// Каждая третья сделка, которой нужно пройти шаг 5 («корректировка документов», необязательный), идёт через него, остальные пропускают.
 const DEALS = [
-	['kam', 'b2b', 'КГТУ', 'Программа «Разработка на Python» для 3 курса', '1250000', 120, 'high', 'documents_exchange', 45],
-	['kam', 'b2b', 'СУТИ', 'Курс по сетевым технологиям для магистратуры', '840000', 60, 'normal', 'meeting', 60],
-	['kam', 'b2b', 'ППУ', 'Пилот «Основы Data Science»', '390000', 40, 'normal', 'communication', 90],
-	['kam', 'b2b', 'НИЦТ', 'Цифровая кафедра: DevOps-трек', '2100000', 150, 'critical', 'documents_correction', 30],
-	['kam', 'b2b', 'УФИИ', 'Летняя ИТ-школа для абитуриентов', '560000', 200, 'normal', 'curriculum_update', 75],
-	['kam', 'b2b', 'КубГАТУ', 'Курс «Кибербезопасность» для агроинженеров', '720000', 80, 'high', 'signing', 20],
-	['kam', 'b2b', 'РКСИ', 'Программа переподготовки преподавателей', '310000', 25, 'low', 'contact_search', 120],
-	['kam', 'b2b', 'УАТУ', 'Трек «Промышленный интернет вещей»', '1650000', 90, 'high', 'implementation_support', 15],
-	['kam', 'b2b', 'ЧИПМ', 'Курс «Машинное обучение» — 2025/26', '480000', 35, 'normal', 'lost', 40],
-	['kam', 'b2b', 'ВГКИТ', 'Стажировочная программа для выпускников', '150000', 30, 'low', 'parked', 180],
-	['kam', 'b2b', 'СПбИЦЭ', 'Обучение сотрудников университета работе с LMS', '290000', 50, 'normal', 'contact_search', 100],
-	['kam', 'b2b', 'МОУПН', 'Партнёрская программа «Цифровые кафедры 2026»', '3400000', 400, 'critical', 'teacher_training', 10],
-	['kam', 'b2b', 'КСУТ', 'Курс по мобильной разработке', '610000', 45, 'normal', 'docs_update', 55],
-	['kam', 'b2b', 'Цифровые кадры', 'Корпоративное обучение аналитиков данных', '990000', 20, 'high', 'meeting', 35],
+	['kam', 'b2b', 'КГТУ', 'Программа «Разработка на Python» для 3 курса', '1250000', 120, 'high', { step: 8 }, 45],
+	['kam', 'b2b', 'СУТИ', 'Курс по сетевым технологиям для магистратуры', '840000', 60, 'normal', { step: 4 }, 60],
+	['kam', 'b2b', 'ППУ', 'Пилот «Основы Data Science»', '390000', 40, 'normal', { step: 2 }, 90],
+	['kam', 'b2b', 'НИЦТ', 'Цифровая кафедра: DevOps-трек', '2100000', 150, 'critical', { step: 6 }, 30],
+	['kam', 'b2b', 'УФИИ', 'Летняя ИТ-школа для абитуриентов', '560000', 200, 'normal', { step: 3 }, 75],
+	['kam', 'b2b', 'КубГАТУ', 'Курс «Кибербезопасность» для агроинженеров', '720000', 80, 'high', { step: 11 }, 20],
+	['kam', 'b2b', 'РКСИ', 'Программа переподготовки преподавателей', '310000', 25, 'low', { step: 1 }, 120],
+	['kam', 'b2b', 'УАТУ', 'Трек «Промышленный интернет вещей»', '1650000', 90, 'high', { step: 7 }, 15],
+	['kam', 'b2b', 'ЧИПМ', 'Курс «Машинное обучение» — 2025/26', '480000', 35, 'normal', { end: 'lost', at: 3 }, 40],
+	['kam', 'b2b', 'ВГКИТ', 'Стажировочная программа для выпускников', '150000', 30, 'low', { end: 'parked', at: 4 }, 180],
+	['kam', 'b2b', 'СПбИЦЭ', 'Обучение сотрудников университета работе с LMS', '290000', 50, 'normal', { step: 1 }, 100],
+	['kam', 'b2b', 'МОУПН', 'Партнёрская программа «Цифровые кафедры 2026»', '3400000', 400, 'critical', { step: 10, back: true }, 10],
+	['kam', 'b2b', 'КСУТ', 'Курс по мобильной разработке', '610000', 45, 'normal', { step: 5 }, 55],
+	['kam', 'b2b', 'Цифровые кадры', 'Корпоративное обучение аналитиков данных', '990000', 20, 'high', { step: 3 }, 35],
 	['kam', 'b2c', 'Смирнова', 'Frontend-разработчик с нуля — Смирнова Е. А.', '89000', 1, 'normal', 'consultation', 14],
 	['kam', 'b2c', 'Волков', 'Data Science Pro — Волков П. Д.', '129000', 1, 'normal', 'won', 7],
 	['kam', 'b2c', 'Егорова', 'Python для анализа данных — Егорова А. Р.', '59000', 1, 'low', 'contact_verification', 21],
-	['head', 'b2b', 'МОУПН', 'Расширение программы на второй кампус', '1800000', 160, 'high', 'classes', 25],
-	['head', 'b2b', 'УФИИ', 'Хакатон-интенсив для студентов', '240000', 300, 'normal', 'execution_control', 12],
-	['head', 'b2b', 'КГТУ', 'Пролонгация программы 2024 года', '1100000', 110, 'normal', 'won', 5],
+	['head', 'b2b', 'МОУПН', 'Расширение программы на второй кампус', '1800000', 160, 'high', { step: 12 }, 25],
+	['head', 'b2b', 'УФИИ', 'Хакатон-интенсив для студентов', '240000', 300, 'normal', { step: 14 }, 12],
+	['head', 'b2b', 'КГТУ', 'Пролонгация программы 2024 года', '1100000', 110, 'normal', { end: 'won', at: 14 }, 5],
 	// вторая волна: ранние статусы с короткими SLA (Истекает / Нарушен) и больше B2C
-	['kam', 'b2b', 'СУТИ', 'Модуль «Облачные технологии» для бакалавриата', '430000', 70, 'high', 'contact_search', 50],
-	['kam', 'b2b', 'ППУ', 'Курс «Тестирование программного обеспечения»', '380000', 45, 'normal', 'communication', 65],
-	['kam', 'b2b', 'НИЦТ', 'Стажировки для студентов 4 курса', '270000', 60, 'normal', 'meeting', 40],
-	['kam', 'b2b', 'КубГАТУ', 'Летняя школа по робототехнике', '520000', 90, 'low', 'contact_search', 85],
-	['kam', 'b2b', 'РКСИ', 'Сетевая академия: расширение программы', '340000', 30, 'normal', 'lost', 70],
-	['head', 'b2b', 'КГТУ', 'Кибербезопасность для преподавателей', '410000', 40, 'high', 'meeting', 30],
-	['head', 'b2b', 'УФИИ', 'Цифровая кафедра: анализ данных', '1350000', 120, 'critical', 'communication', 55],
+	['kam', 'b2b', 'СУТИ', 'Модуль «Облачные технологии» для бакалавриата', '430000', 70, 'high', { step: 1 }, 50],
+	['kam', 'b2b', 'ППУ', 'Курс «Тестирование программного обеспечения»', '380000', 45, 'normal', { step: 2 }, 65],
+	['kam', 'b2b', 'НИЦТ', 'Стажировки для студентов 4 курса', '270000', 60, 'normal', { step: 3 }, 40],
+	['kam', 'b2b', 'КубГАТУ', 'Летняя школа по робототехнике', '520000', 90, 'low', { step: 1 }, 85],
+	['kam', 'b2b', 'РКСИ', 'Сетевая академия: расширение программы', '340000', 30, 'normal', { step: 2 }, 70],
+	['head', 'b2b', 'КГТУ', 'Кибербезопасность для преподавателей', '410000', 40, 'high', { step: 3 }, 30],
+	['head', 'b2b', 'УФИИ', 'Цифровая кафедра: анализ данных', '1350000', 120, 'critical', { step: 2 }, 55],
 	['kam', 'b2c', 'Назаров', 'DevOps с нуля — Назаров И. С.', '99000', 1, 'normal', 'lms_enrollment', 10],
 	['kam', 'b2c', 'Кузьмина', 'Аналитик данных — Кузьмина Т. В.', '109000', 1, 'low', 'lost', 12],
 	['kam', 'b2c', 'Тарасов', 'Java-разработчик — Тарасов А. М.', '119000', 1, 'high', 'payment_contract', 9],
@@ -138,11 +141,11 @@ const DEALS = [
 	['kam', 'b2c', 'Беляева', 'Python-старт — Беляева М. С.', '45000', 1, 'normal', 'contact_verification', 18],
 	['head', 'b2c', 'Гусев', 'Тестировщик ПО — Гусев К. О.', '69000', 1, 'low', 'training_completed', 6],
 	// третья волна: короткие SLA на ранних статусах — сделки быстро уходят в «Истекает» и «Нарушен»
-	['kam', 'b2b', 'КГТУ', 'Пилот по кибербезопасности для магистров', '260000', 35, 'high', 'contact_search', 60],
-	['kam', 'b2b', 'СУТИ', 'Курс «Сети 5G» для бакалавров', '310000', 40, 'normal', 'communication', 70],
-	['head', 'b2b', 'ППУ', 'Летняя практика для студентов ИТ-института', '180000', 60, 'normal', 'teacher_qualification', 45],
-	['kam', 'b2b', 'УАТУ', 'Программа «Умное производство»', '890000', 75, 'critical', 'materials_transfer', 50],
-	['kam', 'b2b', 'ЧИПМ', 'Введение в анализ данных для преподавателей', '145000', 25, 'low', 'contact_search', 90],
+	['kam', 'b2b', 'КГТУ', 'Пилот по кибербезопасности для магистров', '260000', 35, 'high', { step: 1 }, 60],
+	['kam', 'b2b', 'СУТИ', 'Курс «Сети 5G» для бакалавров', '310000', 40, 'normal', { step: 2 }, 70],
+	['head', 'b2b', 'ППУ', 'Летняя практика для студентов ИТ-института', '180000', 60, 'normal', { step: 3 }, 45],
+	['kam', 'b2b', 'УАТУ', 'Программа «Умное производство»', '890000', 75, 'critical', { step: 2 }, 50],
+	['kam', 'b2b', 'ЧИПМ', 'Введение в анализ данных для преподавателей', '145000', 25, 'low', { step: 1 }, 90],
 	['kam', 'b2c', 'Егорова', 'SQL и базы данных — Егорова А. Р.', '39000', 1, 'low', 'consultation', 10]
 ];
 
@@ -169,7 +172,7 @@ const COMMENTS = [
 ];
 
 // ---------------------------------------------------------------- шаги
-const summary = { orgs: 0, contacts: 0, deals: 0, transitions: 0, comments: 0, tasks: 0, participants: 0, sla: 0 };
+const summary = { orgs: 0, contacts: 0, deals: 0, advanced: 0, transitions: 0, comments: 0, tasks: 0, participants: 0, sla: 0 };
 
 const TEAM_NAME = 'Отдел вузов';
 
@@ -189,7 +192,36 @@ async function ensureTeam(me) {
 	};
 	await assign(me.head, { team_id: team.id });
 	await assign(me.kam, { team_id: team.id, manager_id: me.head.id });
+	await ensureTeamTree(team);
 	return team;
+}
+
+/** Команды с регионами для картинки справки: «Отдел вузов» — Москва, «Отдел колледжей» — Ростовская область, «Региональный отдел» внутри «Отдела вузов» — Новосибирская область. */
+async function ensureTeamTree(root) {
+	const regions = (await get('kam', '/api/regions')).items;
+	const regionId = (name) => regions.find((r) => r.name === name)?.id ?? null;
+	const users = (await get('admin', '/api/admin/users?limit=100')).items;
+	const headId = (name) => users.find((u) => u.full_name === name)?.id ?? null;
+	const fresh = await get('admin', `/api/admin/teams/${root.id}`);
+	if (!fresh.region_id && regionId('Москва')) {
+		await call('admin', 'PATCH', `/api/admin/teams/${root.id}`, { region_id: regionId('Москва') }, ifMatch(fresh.version));
+		console.log(`  + «${TEAM_NAME}»: регион Москва`);
+	}
+	const extra = [
+		{ name: 'Отдел колледжей', region: 'Ростовская область', head: 'Дмитрий Волков', parent_id: null },
+		{ name: 'Региональный отдел', region: 'Новосибирская область', head: 'Сергей Смирнов', parent_id: root.id }
+	];
+	const teams = (await get('admin', '/api/admin/teams?limit=100')).items;
+	for (const t of extra) {
+		if (teams.some((x) => x.name === t.name)) continue;
+		const body = { name: t.name, parent_id: t.parent_id, region_id: regionId(t.region), head_id: headId(t.head) };
+		try {
+			await post('admin', '/api/admin/teams', body);
+		} catch {
+			await post('admin', '/api/admin/teams', { ...body, head_id: null });
+		}
+		console.log(`  + команда «${t.name}»`);
+	}
 }
 
 async function ensureReferenceData() {
@@ -222,13 +254,16 @@ async function ensureReferenceData() {
 
 // Короткие календарные сроки на ранних статусах: свежие демо-сделки там быстро становятся «Истекает» / «Нарушен».
 // Остальные промежуточные статусы — 72 рабочих часа, начальный — 24.
-const SLA_SHORT_HOURS = { contact_search: 0.05, communication: 0.15, meeting: 1, contact_verification: 0.05, consultation: 1.5 };
+// B2C — по кодам статусов; B2B — по номерам шагов задания 1–3 (коды воронки меняются между версиями набора).
+const SLA_SHORT_HOURS = { contact_verification: 0.05, consultation: 1.5 };
+const SLA_SHORT_B2B_STEPS = [0.05, 0.15, 1];
 
 function wantedSla(graph) {
-	return graph.statuses
-		.filter((s) => !s.is_archived && (s.type === 'initial' || s.type === 'intermediate'))
+	const b2b = graph.workflow.deal_type === 'b2b';
+	const order = graphSteps(graph);
+	return order
 		.map((s) => {
-			const short = SLA_SHORT_HOURS[s.code];
+			const short = b2b ? SLA_SHORT_B2B_STEPS[order.indexOf(s)] : SLA_SHORT_HOURS[s.code];
 			return {
 				status: s.id,
 				max_duration_hours: short ?? (s.type === 'initial' ? 24 : 72),
@@ -373,6 +408,88 @@ async function ensureOrganizations(regionsByName, ownerOf) {
 	return byShort;
 }
 
+// ---------------------------------------------------------------- лицензии вуз–вендор–ПО (F2)
+// Вендоры — организации-компании, ПО — продукты вида «ПО»; лицензии на вузы из ORGS. Идемпотентно: вендор/ПО — по названию и коду, лицензия — по номеру договора.
+const LICENSE_VENDORS = ['ООО «Астра Линукс»', 'АО «Лаборатория Касперского»', 'ООО «РЕД СОФТ»', 'Фирма «1С»', 'ООО «Новые облачные технологии»', 'ООО «Базальт СПО»'];
+const LICENSE_SOFTWARE = [
+	['AST-SE', 'Astra Linux Special Edition', 0],
+	['KES-ENT', 'Kaspersky Endpoint Security для бизнеса', 1],
+	['RED-OS', 'РЕД ОС Муром', 2],
+	['1C-EDU', '1С:Предприятие 8. Версия для обучения', 3],
+	['MYOFFICE-EDU', 'МойОфис Образование', 4],
+	['ALT-EDU', 'Альт Образование', 5]
+];
+// [фрагмент названия вуза, вендор, ПО, договор, дата подписания|null, подписана да/нет/null, действует до|null, срок в годах|null, бессрочно, статус передачи, менеджер, ответственные, комментарий]
+// Часть лицензий уже истекла, часть истекает в 2026, есть бессрочная и «срок в годах» без даты, одна не подписана.
+const LICENSES = [
+	['Красноярский', 0, 0, 'ЛД-2024/011', '2024-02-12', true, '2025-02-11', null, false, 'transferred', 'Орлов Игорь Павлович', 'Белова Т. С., проректор по ИТ', 'Лицензия закончилась, продление обсуждается'],
+	['Красноярский', 1, 1, 'ЛД-2025/044', '2025-09-03', true, '2027-09-02', null, false, 'transferred', 'Орлов Игорь Павлович', 'Белова Т. С., проректор по ИТ', null],
+	['Московский открытый', 0, 0, 'ЛД-2023/102', '2023-10-20', true, '2025-10-19', null, false, 'transferred', 'Смирнова Алла Викторовна', 'Громов Д. А., начальник ЦИТ', 'Нужно продление до начала семестра'],
+	['Московский открытый', 2, 2, 'ЛД-2026/007', '2026-03-14', true, '2026-12-31', null, false, 'in_progress', 'Смирнова Алла Викторовна', 'Громов Д. А., начальник ЦИТ', 'Заканчивается в декабре, ждём заявку на продление'],
+	['Санкт-Петербургский', 3, 3, 'ЛД-2025/019', '2025-05-22', true, '2028-05-21', null, false, 'transferred', 'Кузнецов Роман Андреевич', 'Тихонова Е. В., зав. кафедрой информатики', null],
+	['Санкт-Петербургский', 4, 4, 'ЛД-2026/021', null, false, null, 3, false, 'not_started', 'Кузнецов Роман Андреевич', 'Тихонова Е. В., зав. кафедрой информатики', 'Договор на согласовании у юристов вуза'],
+	['Воронежский', 5, 5, 'ЛД-2024/067', '2024-11-05', true, '2026-03-31', null, false, 'transferred', 'Фёдорова Мария Олеговна', 'Рябов К. Н., заместитель директора', 'Срок вышел весной, вуз не продлил'],
+	['Челябинский', 1, 1, 'ЛД-2026/030', '2026-06-18', true, '2029-06-17', null, false, 'in_progress', 'Орлов Игорь Павлович', 'Мельников А. В., проректор', null],
+	['Уфимский', 0, 0, 'ЛД-2022/005', '2022-04-01', true, null, null, true, 'transferred', 'Смирнова Алла Викторовна', 'Хабибуллин Р. Р., начальник управления ИТ', 'Бессрочная лицензия по рамочному договору'],
+	['Ростовский', 2, 2, 'ЛД-2026/012', '2026-02-09', true, '2026-11-30', null, false, 'transferred', 'Фёдорова Мария Олеговна', 'Сидоренко Л. П., директор колледжа', 'Истекает в ноябре'],
+	['Кубанский', 3, 3, 'ЛД-2025/088', '2025-12-02', true, '2027-12-01', null, false, 'declined', 'Кузнецов Роман Андреевич', 'Прохоров С. И., проректор по развитию', 'Вуз отказался от передачи, выбрал другое решение'],
+	['Уральский', 4, 4, 'ЛД-2025/053', '2025-07-15', true, '2027-07-14', null, false, 'transferred', 'Орлов Игорь Павлович', 'Дьяконов В. М., зав. лабораторией', null],
+	['Новосибирский', 5, 5, 'ЛД-2026/033', '2026-09-01', true, '2031-08-31', null, false, 'in_progress', 'Фёдорова Мария Олеговна', 'Иванова О. Н., директор ЦИТ', 'Пятилетний договор, идёт передача дистрибутивов'],
+	['Пермский', 1, 1, 'ЛД-2024/090', '2024-09-10', true, '2025-09-09', null, false, 'transferred', 'Смирнова Алла Викторовна', 'Никифоров Е. Г., проректор', 'Истекла в прошлом году'],
+	['Самарский', 0, 0, 'ЛД-2026/041', null, null, null, 2, false, 'not_started', 'Кузнецов Роман Андреевич', 'Лебедева Н. А., начальник отдела ИТ', null],
+	['Казанский', 2, 2, 'ЛД-2025/071', '2025-10-27', true, '2026-10-26', null, false, 'transferred', 'Орлов Игорь Павлович', 'Шакиров Т. Ф., проректор по цифровизации', 'Закончится через неделю'],
+	['Казанский', 3, 3, 'ЛД-2026/002', '2026-01-20', true, '2028-01-19', null, false, 'transferred', 'Орлов Игорь Павлович', 'Шакиров Т. Ф., проректор по цифровизации', null]
+];
+
+async function ensureLicenses(orgsByShort) {
+	const vendorIds = [];
+	for (const name of LICENSE_VENDORS) {
+		const found = await get('admin', `/api/organizations?org_type=company&q=${encodeURIComponent(name.replace(/[«»]/g, '').slice(0, 14))}&limit=20`);
+		let org = found.items.find((o) => o.name === name);
+		if (!org) org = await post('admin', '/api/organizations', { name, org_type: 'company', source: 'demo' }, idem());
+		vendorIds.push(org.id);
+	}
+	const productIds = [];
+	for (const [code, name, vendor] of LICENSE_SOFTWARE) {
+		const found = await get('admin', `/api/products?kind=software&code=${code}&limit=5`);
+		let product = found.items[0];
+		if (!product) product = await post('admin', '/api/products', { code, name, kind: 'software', vendor_id: vendorIds[vendor], currency: 'RUB' }, idem());
+		productIds.push(product.id);
+	}
+	const orgs = Object.values(orgsByShort);
+	let created = 0;
+	for (const [frag, vendor, product, contract, signedAt, signed, until, term, perpetual, status, manager, responsible, comment] of LICENSES) {
+		const org = orgs.find((o) => o.name.includes(frag));
+		if (!org) continue;
+		const exists = await get('admin', `/api/organization-licenses?q=${encodeURIComponent(contract)}&limit=5`);
+		if (exists.items.some((l) => l.contract_number === contract)) continue;
+		await post(
+			'admin',
+			'/api/organization-licenses',
+			{
+				organization_id: org.id,
+				vendor: LICENSE_VENDORS[vendor],
+				vendor_id: vendorIds[vendor],
+				product_name: LICENSE_SOFTWARE[product][1],
+				product_id: productIds[product],
+				contract_number: contract,
+				license_signed_at: signedAt,
+				is_signed: signed,
+				license_valid_until: until,
+				license_term_years: term,
+				is_perpetual: perpetual,
+				transfer_status: status,
+				manager_full_name: manager,
+				responsible_contacts: responsible,
+				comment
+			},
+			idem()
+		);
+		created += 1;
+	}
+	return created;
+}
+
 async function ensureContacts(orgsByShort, ownerByShort) {
 	const byKey = {};
 	for (const [short, last, first, middle, position, dm] of CONTACTS) {
@@ -437,29 +554,6 @@ function pathTo(graph, fromId, toCode) {
 	return steps;
 }
 
-/** Категории вложений `step_attachments.*`, которых требует условие перехода (all/any/лист). */
-function requiredAttachmentCategories(conditions) {
-	if (!conditions || typeof conditions !== 'object') return [];
-	if (Array.isArray(conditions.all)) return conditions.all.flatMap(requiredAttachmentCategories);
-	if (Array.isArray(conditions.any)) return conditions.any.flatMap(requiredAttachmentCategories);
-	if (typeof conditions.field === 'string' && conditions.field.startsWith('step_attachments.')) return [conditions.field.slice('step_attachments.'.length)];
-	return [];
-}
-
-// Минимальный валидный PDF (проходит проверку magic bytes): демо-вложение «Договор»/«Акт» на шаге воронки.
-const DEMO_PDF = Buffer.from(['%PDF-1.4', '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj', '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj', '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj', 'trailer<</Root 1 0 R>>', '%%EOF', ''].join('\n'), 'latin1');
-const CATEGORY_FILENAMES = { contract: 'dogovor-demo.pdf', act: 'akt-demo.pdf' };
-
-/** Прикладывает к сделке демо-файл категории на текущем шаге (условия `step_attachments.*` ждут вложение именно здесь). */
-async function attachDemoFile(who, deal, category) {
-	const filename = CATEGORY_FILENAMES[category] ?? `${category}-demo.pdf`;
-	const intent = await post(who, '/api/files/upload-intent', { filename, size_bytes: DEMO_PDF.length, mime_type: 'application/pdf', purpose: 'deal_attachment', category }, idem());
-	const put = await fetch(intent.upload_url, { method: 'PUT', headers: { 'Content-Type': 'application/pdf', ...(intent.upload_headers ?? {}) }, body: DEMO_PDF });
-	if (!put.ok) throw new Error(`PUT вложения → ${put.status}`);
-	await post(who, `/api/files/${intent.file_id}/commit`, {});
-	await post(who, '/api/attachments', { file_id: intent.file_id, entity_type: 'deal', entity_id: deal.id, category, description: 'Демо-файл' }, idem());
-}
-
 async function walk(who, deal, graph, targetCode, lossReasonId) {
 	const steps = pathTo(graph, deal.status_id, targetCode);
 	if (!steps) {
@@ -475,17 +569,71 @@ async function walk(who, deal, graph, targetCode, lossReasonId) {
 		if (status.code === 'consultation') body.fields['custom_fields.contact_verified'] = true;
 		if (status.code === 'lms_enrollment') body.fields['custom_fields.payment_confirmed'] = true;
 		try {
-			for (const category of new Set(requiredAttachmentCategories(transition.conditions))) await attachDemoFile(who, current, category);
-			// Вложение меняет версию сделки не всегда, но перечитываем: If-Match должен совпасть с актуальной версией.
-			if (requiredAttachmentCategories(transition.conditions).length) {
-				const fresh = await get(who, `/api/deals/${current.id}`);
-				current = fresh.deal ?? fresh;
-			}
 			const res = await post(who, `/api/deals/${current.id}/transition`, body, ifMatch(current.version));
 			current = res.deal;
 			summary.transitions += 1;
 		} catch (e) {
 			console.log(`    ! ${deal.number}: переход «${transition.name}» не выполнен (${e.message.slice(0, 140)})`);
+			return current;
+		}
+	}
+	return current;
+}
+
+/**
+ * Маршрут B2B-сделки по цели из DEALS: номера шагов подряд (шаг 5 — только если `via5`), затем возврат на шаг назад или завершающий статус.
+ * Шаг 5 необязателен: без него переход идёт 4 → 6 напрямую.
+ */
+export function routeFor(target, via5) {
+	const at = target.at ?? target.step;
+	const route = [];
+	for (let n = 2; n <= at; n += 1) if (n !== 5 || via5 || at < 6) route.push(n);
+	if (target.back && at > 1) route.push(at === 6 && !via5 ? 4 : at - 1);
+	if (target.end) route.push(target.end);
+	return route;
+}
+
+let b2bFlow = null; // воронка B2B: список шагов и все статусы (нужны walkB2b)
+
+/** Условия перехода → поля, файлы и комментарий тела запроса; подпись выполнить нельзя — такой переход пропускается с понятной строкой. */
+async function bodyFor(who, j, deal, t, status, lossReasonId) {
+	const body = { to_status_id: status.id, fields: {}, attachments: [] };
+	if (t.requires_comment) body.comment = status.type === 'lost' ? 'Вуз выбрал другого поставщика после сравнения КП.' : status.type === 'parked' ? 'Ждём решения учёного совета, вернёмся к сделке позже.' : `Переход: ${t.name}.`;
+	if (status.type === 'lost') body.fields.loss_reason_id = lossReasonId;
+	if (status.type === 'parked') body.fields['custom_fields.park_reason'] = 'Решение учёного совета отложено';
+	if (t.satisfied) return body;
+	let needSignature = false;
+	for (const leaf of t.conditions ?? []) {
+		if (leaf.satisfied) continue;
+		const file = /^step_attachments\.(.+)$/.exec(leaf.field);
+		if (file) {
+			if (!body.attachments.length) body.attachments.push(await attachPdf(j, deal.id, file[1]));
+		} else if (leaf.field === 'signature_status') needSignature = true;
+		else if (leaf.field === 'loss_reason_id' || leaf.field === 'custom_fields.park_reason' || leaf.field === 'custom_fields.resume_at') continue;
+		else if (leaf.field.startsWith('custom_fields.')) body.fields[leaf.field] = leaf.expected ?? 'Демо';
+	}
+	if (needSignature && !body.attachments.length) throw new Error('переход требует подписи: пропущен');
+	return body;
+}
+
+async function walkB2b(who, deal, route, lossReasonId) {
+	const j = await apiAs(who);
+	let current = deal;
+	for (const stop of route) {
+		const status = typeof stop === 'number' ? b2bFlow.steps[stop - 1] : b2bFlow.all.find((x) => x.type === stop);
+		const available = (await get(who, `/api/deals/${current.id}/available-transitions`)).items;
+		const t = available.find((x) => x.to_status_id === status.id);
+		if (!t || !t.role_allowed) {
+			console.log(`    ! ${deal.number}: нет доступного перехода в «${status.name.slice(0, 40)}»${t ? ' (не по роли)' : ''}`);
+			return current;
+		}
+		try {
+			const body = await bodyFor(who, j, current, t, status, lossReasonId);
+			const res = await post(who, `/api/deals/${current.id}/transition`, body, ifMatch(current.version));
+			current = res.deal;
+			summary.transitions += 1;
+		} catch (e) {
+			console.log(`    ! ${deal.number}: переход «${t.name.slice(0, 50)}» не выполнен (${e.message.slice(0, 140)})`);
 			return current;
 		}
 	}
@@ -537,6 +685,8 @@ async function main() {
 	const graphs = {};
 	for (const wf of workflows.filter((w) => w.is_default)) graphs[wf.deal_type] = await ensureSla(wf);
 	if (!graphs.b2b || !graphs.b2c) throw new Error('Нет опубликованных воронок по умолчанию: сначала python -m app.modules.workflow.seed');
+	b2bFlow = { steps: graphSteps(graphs.b2b), all: graphs.b2b.statuses.filter((x) => !x.is_archived) };
+	console.log(`  B2B: «${graphs.b2b.workflow.name}», шагов ${b2bFlow.steps.length}`);
 
 	console.log('Организации…');
 	const ownerOf = (org) => (org.short === 'МОУПН' || org.short === 'УФИИ' ? 'head' : 'kam');
@@ -548,14 +698,40 @@ async function main() {
 	const contacts = await ensureContacts(orgsByShort, ownerByShort);
 	console.log(`  контактов: ${Object.keys(contacts).length} (новых ${summary.contacts})`);
 
+	console.log('Лицензии…');
+	console.log(`  лицензий: ${LICENSES.length} (новых ${await ensureLicenses(orgsByShort)})`);
+
 	console.log('Сделки…');
 	const created = [];
+	let needFive = 0; // сколько сделок уже должны были пройти шаг 5: каждая третья идёт через него
 	for (const [plannedWho, type, party, title, amount, students, priority, target, closeDays] of DEALS) {
 		// Менеджер не может завести сделку на чужую организацию (бэкенд отвечает 404, как для несуществующей): если организацию
 		// ведёт руководитель, сделку по ней заводит он. Организации руководителя — только МОУПН и УФИИ (`ownerOf` выше).
 		const who = type === 'b2b' && plannedWho === 'kam' && ownerByShort[party] === 'head' ? 'head' : plannedWho;
+		const isB2b = type === 'b2b' && typeof target === 'object';
+		const passesFive = isB2b && (target.at ?? target.step) >= 6;
+		const via5 = passesFive && needFive++ % 3 === 0;
+		const lossReasonId = lossReasons[Math.abs(hash(title)) % lossReasons.length]?.id;
 		const found = await get(who, `/api/deals?q=${encodeURIComponent(title)}&limit=5`);
-		if (found.items.some((d) => d.title === title)) continue;
+		const existing = found.items.find((d) => d.title === title);
+		if (existing) {
+			// сделка уже есть: если она остановилась на маршруте раньше цели (сид шёл по старой воронке), доводим до цели с того места;
+			// историю не переписываем: сделка вне маршрута или уже у цели остаётся как есть
+			if (isB2b) {
+				const full = (await get(who, `/api/deals/${existing.id}`)).deal;
+				const route = routeFor(target, via5);
+				const here = b2bFlow.steps.findIndex((x) => x.id === full.status_id) + 1;
+				const from = here === 1 ? -1 : here > 1 ? route.lastIndexOf(here) : -2;
+				if (from > -2 && !full.closed_at && from < route.length - 1) {
+					const moved = await walkB2b(who, full, route.slice(from + 1), lossReasonId);
+					if (moved.status_id !== full.status_id) {
+						summary.advanced += 1;
+						console.log(`  ↑ ${full.number} «${title}» → ${JSON.stringify(target)}`);
+					}
+				}
+			}
+			continue;
+		}
 		const org = type === 'b2b' ? orgsByShort[party] : null;
 		const contact = type === 'b2b' ? Object.entries(contacts).find(([k]) => k.startsWith(`${party}:`))?.[1] : contacts[party];
 		if (type === 'b2b' && !org) continue;
@@ -567,9 +743,9 @@ async function main() {
 		};
 		let deal = await post(who, '/api/deals', body, idem());
 		summary.deals += 1;
-		deal = await walk(who, deal, graphs[type], target, lossReasons[Math.abs(hash(title)) % lossReasons.length]?.id);
+		deal = isB2b ? await walkB2b(who, deal, routeFor(target, via5), lossReasonId) : await walk(who, deal, graphs[type], target, lossReasonId);
 		created.push({ who, deal, party });
-		console.log(`  + ${deal.number} «${title}» → ${target}`);
+		console.log(`  + ${deal.number} «${title}» → ${typeof target === 'string' ? target : JSON.stringify(target)}`);
 	}
 
 	console.log('Комментарии, задачи, участники…');

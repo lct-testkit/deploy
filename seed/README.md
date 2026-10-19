@@ -21,7 +21,7 @@
 ## Не править руками
 
 Файлы здесь — копии из репозитория **frontend** (`tools/seed-demo.mjs`, `tools/scenarios/b-seed-catalogs.mjs`,
-`tools/scenarios/lead-seed-erasure.mjs`); меняется только строка импорта. `lib.mjs` — урезанная выжимка
+`tools/scenarios/lead-seed-erasure.mjs`, помощники сделок `tools/scenarios/f-lib.mjs` и PDF `tools/fixtures/contract.pdf`); меняются только пути импорта. `lib.mjs` — урезанная выжимка
 `frontend/tools/lib.mjs` без playwright. Обновление:
 
 ```bash
