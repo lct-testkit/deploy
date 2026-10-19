@@ -33,8 +33,8 @@ images:
     repo: deploy
     context: mocks/lms
     dockerfile: Dockerfile
-    tag: "sha-afed966"
-    digest: "sha256:b10a72ffcc433cfb4b51184c82b3ae57af854fdfc3e94731b2c74f9261f74cfd"
+    tag: "sha-cabce5c"
+    digest: "sha256:a9f39a1ddeac7a9b05c409d59f3ffdbefce8e02ffa93920cde46b26597a0ca31"
   # Сайт школы на Laravel (профиль compose `site`). optional: пока образ не опубликован build.yml, SITE_IMAGE
   # указывает на локальный тег rtk-site:local (compose build:), а не блокирует деплой всего стека.
   site:
@@ -42,14 +42,14 @@ images:
     context: site
     dockerfile: Dockerfile
     optional: true
-    tag: "sha-e6f3afe"
-    digest: "sha256:7064bead1d4ca31cab8dfb075a054b5f40d86f918e6cfca3ce343f0cf7f68e17"
+    tag: "sha-cabce5c"
+    digest: "sha256:204d1425b3261a82e1c1ca69f1544f428c10e53a5276967bd6e671611c6ecb93"
   mock-cms:
     repo: deploy
     context: mocks/cms
     dockerfile: Dockerfile
-    tag: "sha-afed966"
-    digest: "sha256:714fde3d1af08d08fab5f9d6ffcb2e2f26596574db2c09024a97a99e4bed28b2"
+    tag: "sha-cabce5c"
+    digest: "sha256:a928dc9c3ff5c778fbdaa89e08fefc4da88f636c923289c6d20a49a1e23ce8f6"
 
 # Сервис compose/helm -> имя образа.
 # api/worker/sms-gateway-mock делят один образ (backend/Dockerfile), отличаются
