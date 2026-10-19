@@ -148,10 +148,6 @@ $(VAR)-подстановку в поле `value:` только для пере�
   value: {{ .Values.env.workerMetricsPort | quote }}
 - name: CMS_WEBHOOK_SECRET_REF
   value: {{ .Values.env.cmsWebhookSecretRef | quote }}
-- name: CMS_BASE_URL
-  value: {{ .Values.env.cmsBaseURL | quote }}
-- name: CMS_AUTH_REF
-  value: {{ .Values.env.cmsAuthRef | quote }}
 - name: LMS_BASE_URL
   value: {{ .Values.env.lmsBaseURL | quote }}
 - name: LMS_AUTH_REF
@@ -164,8 +160,6 @@ $(VAR)-подстановку в поле `value:` только для пере�
   value: {{ .Values.env.integrationWebhookRateLimitPerMin | quote }}
 - name: CMS_WEBHOOK_SECRET
   value: {{ .Values.env.cmsWebhookSecret | quote }}
-- name: CMS_AUTH_TOKEN
-  value: {{ .Values.env.cmsAuthToken | quote }}
 - name: BITRIX_WEBHOOK_URL
   value: {{ .Values.env.bitrixWebhookUrl | quote }}
 - name: BITRIX_SOURCE_ID

@@ -65,16 +65,12 @@ x-api-env: &api-env
   # тем же числом в Service/healthcheck воркера — поменяли порт здесь, поправьте и там.
   WORKER_METRICS_PORT: ${WORKER_METRICS_PORT:-9101}
   CMS_WEBHOOK_SECRET_REF: ${CMS_WEBHOOK_SECRET_REF:-}
-  # Забор заявок с сайта по API (профиль `site`, см. docs/site.md): адрес сайта и ссылка на переменную с Bearer-токеном.
-  CMS_BASE_URL: ${CMS_BASE_URL:-}
-  CMS_AUTH_REF: ${CMS_AUTH_REF:-CMS_AUTH_TOKEN}
   LMS_BASE_URL: ${LMS_BASE_URL:-}
   LMS_AUTH_REF: ${LMS_AUTH_REF:-}
   BITRIX_CONNECTOR_ENABLED: ${BITRIX_CONNECTOR_ENABLED:-false}
   BITRIX_WEBHOOK_URL_REF: ${BITRIX_WEBHOOK_URL_REF:-}
   INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN: ${INTEGRATION_WEBHOOK_RATE_LIMIT_PER_MIN:-60}
   CMS_WEBHOOK_SECRET: ${CMS_WEBHOOK_SECRET:-}
-  CMS_AUTH_TOKEN: ${CMS_AUTH_TOKEN:-}
   BITRIX_WEBHOOK_URL: ${BITRIX_WEBHOOK_URL:-}
   BITRIX_SOURCE_ID: ${BITRIX_SOURCE_ID:-OTHER}
   ALLOWED_FILE_EXTENSIONS: ${ALLOWED_FILE_EXTENSIONS:-png,jpeg,jpg,pdf,zip,gz,gzip,rar,doc,docx,xls,xlsx,xml,csv,json}
@@ -97,7 +93,8 @@ x-api-env: &api-env
   HEALTH_DETAILS_TOKEN: ${HEALTH_DETAILS_TOKEN:-}
   # B5-1: забор по API у сайта и LMS.
   CMS_BASE_URL: ${CMS_BASE_URL:-}
-  CMS_AUTH_REF: ${CMS_AUTH_REF:-}
+  # Забор заявок с сайта по API (профиль `site`, docs/site.md): токен лежит в CMS_AUTH_TOKEN, ссылка на него по умолчанию — она же.
+  CMS_AUTH_REF: ${CMS_AUTH_REF:-CMS_AUTH_TOKEN}
   CMS_AUTH_TOKEN: ${CMS_AUTH_TOKEN:-}
   LMS_AUTH_TOKEN: ${LMS_AUTH_TOKEN:-}
   INTEGRATION_PULL_PAGE_SIZE: ${INTEGRATION_PULL_PAGE_SIZE:-100}
