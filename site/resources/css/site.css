@@ -55,6 +55,8 @@ a:hover { color: var(--atmr-accent-hover); }
 .codewin__line { display: block; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #b98bff, #7a4dff); opacity: .8; }
 .codewin__line:nth-child(3n) { background: linear-gradient(90deg, #ff9d7a, #ff4f12); }
 .chips { position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+/* Чипы фактов лежат и на фиолетовом, и на оранжевом: тёмная плашка того же тона, что окно кода, — белый текст на ней читается на любом из двух (≥ 7:1) */
+.chip { padding: 4px 12px; border-radius: var(--atmr-border-radius-l); background: rgba(20, 8, 48, .85); color: #fff; font: var(--atmr-typography-body-s, 400 14px/1.4 sans-serif); }
 
 /* Секции; заголовок с вертикальной оранжевой чертой, как на edupro */
 .section { padding: 56px 0; }

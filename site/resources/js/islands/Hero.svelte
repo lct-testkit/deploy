@@ -1,7 +1,7 @@
 <script>
 	// Главный экран на фиолетовом фоне с оранжевой диагональной формой. Фиолетовый даёт тема rtk_purple (accent), кнопка внутри —
 	// в теме rtk_default (accent оранжевый): обе темы — стандартные классы ДС, токены не переопределяются.
-	import { Badge, Button, Typography } from '@lct-testkit/rt-ui';
+	import { Button, Typography } from '@lct-testkit/rt-ui';
 
 	let { eyebrow, title, text, ctaLabel, ctaHref, facts = [] } = $props();
 
@@ -31,7 +31,7 @@
 				</div>
 			</div>
 			<div class="chips">
-				{#each facts as f (f)}<Badge variant="primary" colorScheme="neutral" size="m" label={f} />{/each}
+				{#each facts as f (f)}<span class="chip">{f}</span>{/each}
 			</div>
 		</div>
 	</div>
