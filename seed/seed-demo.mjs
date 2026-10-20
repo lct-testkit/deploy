@@ -259,6 +259,7 @@ async function ensureReferenceData() {
 		for (const [code, name, category] of list) await post('admin', '/api/loss-reasons', { code, name, category, is_active: true });
 		console.log('  + причины отказа: 5');
 	}
+	const directions = new Map((await get('admin', '/api/directions?limit=100')).items.map((d) => [d.code, d.id]));
 	const products = await get('admin', '/api/products?is_active=true&limit=50');
 	if (!products.items.length) {
 		const list = [
@@ -268,31 +269,48 @@ async function ensureReferenceData() {
 			['cyber', 'Кибербезопасность', 80, 'offline', '6100.00']
 		];
 		for (const [code, name, hours, format, price] of list) {
-			await post('admin', '/api/products', { code, name, duration_hours: hours, format, base_price: price, currency: 'RUB', is_active: true });
+			await post('admin', '/api/products', { code, name, duration_hours: hours, format, base_price: price, currency: 'RUB', is_active: true, direction_id: directions.get(PRODUCT_DIRECTIONS[code]) ?? null });
 		}
 		console.log('  + продукты: 4');
 	}
+	await ensureProductDirections(directions);
 }
 
-// Короткие календарные сроки на ранних статусах: свежие демо-сделки там быстро становятся «Истекает» / «Нарушен».
-// Остальные промежуточные статусы — 72 рабочих часа, начальный — 24.
-// B2C — по кодам статусов; B2B — по номерам шагов задания 1–3 (коды воронки меняются между версиями набора).
-const SLA_SHORT_HOURS = { contact_verification: 0.05, consultation: 1.5 };
-const SLA_SHORT_B2B_STEPS = [0.05, 0.15, 1];
+// Направление каждого курса каталога (QA R-13: в «Рейтинге востребованности» у всех продуктов стояло «Направление —»).
+const PRODUCT_DIRECTIONS = { 'py-base': 'python', 'ds-pro': 'data', devops: 'devops', cyber: 'security' };
+
+/** Продукты без направления получают его (идемпотентно: заполненное не трогаем). */
+async function ensureProductDirections(directions) {
+	const products = (await get('admin', '/api/products?is_active=true&kind=course&limit=100')).items;
+	let patched = 0;
+	for (const product of products) {
+		const wanted = directions.get(PRODUCT_DIRECTIONS[product.code]);
+		if (product.direction_id || !wanted) continue;
+		await call('admin', 'PATCH', `/api/products/${product.id}`, { direction_id: wanted }, ifMatch(product.version));
+		patched += 1;
+	}
+	if (patched) console.log(`  + направления у продуктов: ${patched}`);
+}
+
+// Реалистичные сроки в рабочих днях (QA W-2: «Первичный контакт 3 мин» превращал половину сделок в просроченные).
+// B2B — по номерам шагов задания 1–14, B2C — по кодам статусов; всё остальное — 3 рабочих дня (72 ч), начальный статус — сутки.
+// Просрочки на демо остаются точечными: их раскладывает `app.mocks.demo_showcase` (см. deploy/scripts/seed_demo.sh).
+export const SLA_B2B_STEP_HOURS = [24, 72, 120, 120, 72, 120, 120, 168, 240, 240, 240, 240, 240, 240];
+const SLA_B2C_HOURS = { contact_verification: 24, consultation: 72, payment_contract: 120, lms_enrollment: 72 };
 
 function wantedSla(graph) {
 	const b2b = graph.workflow.deal_type === 'b2b';
 	const order = graphSteps(graph);
 	return order
 		.map((s) => {
-			const short = b2b ? SLA_SHORT_B2B_STEPS[order.indexOf(s)] : SLA_SHORT_HOURS[s.code];
+			const hours = b2b ? SLA_B2B_STEP_HOURS[order.indexOf(s)] : SLA_B2C_HOURS[s.code];
 			return {
 				status: s.id,
-				max_duration_hours: short ?? (s.type === 'initial' ? 24 : 72),
+				max_duration_hours: hours ?? (s.type === 'initial' ? 24 : 72),
 				warn_threshold_pct: 75,
 				escalate_to_role: 'HEAD',
 				channels: ['in_app'],
-				count_business_days: short === undefined,
+				count_business_days: true,
 				is_active: true
 			};
 		});
@@ -400,6 +418,12 @@ async function ensureRegistry() {
 	console.log('  ! реестр ещё разбирается — подсказки появятся через минуту');
 }
 
+/** Название региона начинается со слова из сида: «Омская» ≠ «Костромская область» (подстрока «омская» там есть), «Татарстан» = «Республика Татарстан». */
+export function regionMatches(regionName, wanted) {
+	const words = regionName.toLowerCase().split(/\s+/);
+	return words.some((word) => word.startsWith(wanted.toLowerCase()));
+}
+
 async function ensureOrganizations(regionsByName, ownerOf) {
 	const byShort = {};
 	for (const org of ORGS) {
@@ -407,7 +431,7 @@ async function ensureOrganizations(regionsByName, ownerOf) {
 		const found = await get(who, `/api/organizations?inn=${org.inn}&limit=1`);
 		let row = found.items[0];
 		if (!row) {
-			const region = [...regionsByName.entries()].find(([name]) => name.toLowerCase().includes(org.region.toLowerCase()))?.[1] ?? null;
+			const region = [...regionsByName.entries()].find(([name]) => regionMatches(name, org.region))?.[1] ?? null;
 			row = await post(who, '/api/organizations', {
 				name: org.name,
 				short_name: org.short,
@@ -432,14 +456,17 @@ async function ensureOrganizations(regionsByName, ownerOf) {
 
 // ---------------------------------------------------------------- лицензии вуз–вендор–ПО (F2)
 // Вендоры — организации-компании, ПО — продукты вида «ПО»; лицензии на вузы из ORGS. Идемпотентно: вендор/ПО — по названию и коду, лицензия — по номеру договора.
-const LICENSE_VENDORS = ['ООО «Астра Линукс»', 'АО «Лаборатория Касперского»', 'ООО «РЕД СОФТ»', 'Фирма «1С»', 'ООО «Новые облачные технологии»', 'ООО «Базальт СПО»'];
+// В таблице лицензий и в подсказках формы вендор пишется ОДНОЙ строкой — названием организации-вендора со справочника (QA L-7: «Астра Линукс» против «ООО «Астра Линукс»»).
+const LICENSE_VENDORS = ['ООО «Астра Линукс»', 'АО «Лаборатория Касперского»', 'ООО «РЕД СОФТ»', 'Фирма «1С»', 'ООО «Новые облачные технологии»', 'ООО «Базальт СПО»', 'АО «РТК-Солар»', 'ООО «Аренадата Софтвер»'];
 const LICENSE_SOFTWARE = [
 	['AST-SE', 'Astra Linux Special Edition', 0],
 	['KES-ENT', 'Kaspersky Endpoint Security для бизнеса', 1],
 	['RED-OS', 'РЕД ОС Муром', 2],
 	['1C-EDU', '1С:Предприятие 8. Версия для обучения', 3],
 	['MYOFFICE-EDU', 'МойОфис Образование', 4],
-	['ALT-EDU', 'Альт Образование', 5]
+	['ALT-EDU', 'Альт Образование', 5],
+	['SOLAR-DOZOR', 'Solar Dozor', 6],
+	['ARENADATA-DB', 'Arenadata DB', 7]
 ];
 // [фрагмент названия вуза, вендор, ПО, договор, дата подписания|null, подписана да/нет/null, действует до|null, срок в годах|null, бессрочно, статус передачи, менеджер, ответственные, комментарий]
 // Часть лицензий уже истекла, часть истекает в 2026, есть бессрочная и «срок в годах» без даты, одна не подписана.
@@ -460,7 +487,9 @@ const LICENSES = [
 	['Пермский', 1, 1, 'ЛД-2024/090', '2024-09-10', true, '2025-09-09', null, false, 'transferred', 'Смирнова Алла Викторовна', 'Никифоров Е. Г., проректор', 'Истекла в прошлом году'],
 	['Самарский', 0, 0, 'ЛД-2026/041', null, null, null, 2, false, 'not_started', 'Кузнецов Роман Андреевич', 'Лебедева Н. А., начальник отдела ИТ', null],
 	['Казанский', 2, 2, 'ЛД-2025/071', '2025-10-27', true, '2026-10-26', null, false, 'transferred', 'Орлов Игорь Павлович', 'Шакиров Т. Ф., проректор по цифровизации', 'Закончится через неделю'],
-	['Казанский', 3, 3, 'ЛД-2026/002', '2026-01-20', true, '2028-01-19', null, false, 'transferred', 'Орлов Игорь Павлович', 'Шакиров Т. Ф., проректор по цифровизации', null]
+	['Казанский', 3, 3, 'ЛД-2026/002', '2026-01-20', true, '2028-01-19', null, false, 'transferred', 'Орлов Игорь Павлович', 'Шакиров Т. Ф., проректор по цифровизации', null],
+	['Тюменский', 6, 6, 'ЛД-2026/048', '2026-04-08', true, '2027-04-07', null, false, 'transferred', 'Фёдорова Мария Олеговна', 'Макаров И. В., начальник центра информационной безопасности', null],
+	['Омский', 7, 7, 'ЛД-2026/052', null, null, null, 1, false, 'in_progress', 'Кузнецов Роман Андреевич', 'Крылов В. Л., заместитель директора по ИТ', 'Тестовая эксплуатация перед закупкой']
 ];
 
 async function ensureLicenses(orgsByShort) {
@@ -639,6 +668,17 @@ async function bodyFor(who, j, deal, t, status, lossReasonId) {
 	return body;
 }
 
+/** Сделка без продуктов (создана старым сидом или руками) получает один-два курса: иначе в отчётах «Продукт —», «Направление —». Идемпотентно. */
+async function ensureDealProducts(who, listed, title, students, products) {
+	if (listed.products_total !== 0 || !products.length) return;
+	const full = (await get(who, `/api/deals/${listed.id}`)).deal;
+	const picks = products.slice(hash(title) % Math.max(1, products.length - 1)).slice(0, 1 + (Math.abs(hash(title)) % 2));
+	const items = picks.map((p, i) => ({ product_id: p.id, quantity: i === 0 ? Math.max(1, Math.round(students / 20)) : 1, price: p.base_price, discount_pct: i === 0 ? 10 : 0, total: null }));
+	const res = await tryCall(who, 'PUT', `/api/deals/${full.id}/products`, { items }, ifMatch(full.version));
+	if (res.status >= 300) console.log(`  ! продукты сделки «${title}»: ${res.message}`);
+	else summary.products = (summary.products ?? 0) + 1;
+}
+
 async function walkB2b(who, deal, route, lossReasonId) {
 	const j = await apiAs(who);
 	let current = deal;
@@ -763,6 +803,14 @@ async function ensureApprovals() {
 	}
 }
 
+/**
+ * Приёмник событий демо-стенда: Caddy отвечает 200 на `/demo-webhook` (deploy/compose/Caddyfile). Из сети compose сид получает
+ * адрес в `SEED_WEBHOOK_URL`; без него — публичный адрес стенда (локально без Caddy-маршрута доставки будут падать — это ожидаемо).
+ */
+export function webhookSinkUrl() {
+	return process.env.SEED_WEBHOOK_URL || `${process.env.SEED_PUBLIC_URL || BASE}/demo-webhook`;
+}
+
 async function ensureIntegrations() {
 	const users = (await get('admin', '/api/admin/users?limit=100')).items;
 	const integration = users.find((u) => u.role === 'INTEGRATION');
@@ -776,10 +824,13 @@ async function ensureIntegrations() {
 	const subs = await get('admin', '/api/admin/integrations/webhooks');
 	let sub = subs.find((s) => s.name === SUB_NAME);
 	if (!sub) {
-		// в офлайн-контейнере BASE — внутренний адрес сети compose, а подписка нужна на публичный
-		const url = `${process.env.SEED_PUBLIC_URL || BASE}/site/`;
-		sub = await post('admin', '/api/admin/integrations/webhooks', { name: SUB_NAME, url, event_types: ['DOCUMENT_SIGNED', 'DEAL_CREATED'] }, idem());
+		sub = await post('admin', '/api/admin/integrations/webhooks', { name: SUB_NAME, url: webhookSinkUrl(), event_types: ['DOCUMENT_SIGNED', 'DEAL_CREATED'] }, idem());
 		console.log(`  + подписка «${SUB_NAME}»`);
+		await tryCall('admin', 'POST', `/api/admin/integrations/webhooks/${sub.id}/test`);
+	} else if (/\/site\/?$/.test(sub.url)) {
+		// прежние сиды слали события на «/site/», где POST не принимается (405): все доставки «Ошибка, будет повтор» (QA I-2)
+		await call('admin', 'PATCH', `/api/admin/integrations/webhooks/${sub.id}`, { url: webhookSinkUrl() });
+		console.log(`  + подписка «${SUB_NAME}»: адрес приёмника исправлен`);
 		await tryCall('admin', 'POST', `/api/admin/integrations/webhooks/${sub.id}/test`);
 	}
 }
@@ -864,6 +915,31 @@ const REPORT_SPECS = [
 	['kam', 'deal_register', 'xlsx'],
 	['kam', 'stuck_deals', 'xlsx']
 ];
+
+// Общий дашборд «Обзор воронки» (как на кадре справки dashboards.png): два показателя, воронка и состояние SLA. Идемпотентно — по названию.
+const DASHBOARD_NAME = 'Обзор воронки';
+const DASHBOARD_WIDGETS = [
+	{ widget_type: 'stat_tile', config: { template_code: 'kam_summary', params: {}, title: 'Сделок в работе', metric: 'sum:В работе' }, position: { x: 0, y: 0, h: 1, w: 3 } },
+	{ widget_type: 'stat_tile', config: { template_code: 'kam_summary', params: {}, title: 'Сумма выигранных', metric: 'sum:Сумма выигранных' }, position: { x: 3, y: 0, h: 1, w: 3 } },
+	{ widget_type: 'report_chart', config: { template_code: 'deal_funnel', params: {}, title: 'Воронка по статусам' }, position: { x: 0, y: 1, h: 1, w: 6 } },
+	{ widget_type: 'report_chart', config: { template_code: 'sla_compliance', params: {}, title: 'Соблюдение SLA' }, position: { x: 6, y: 1, h: 1, w: 6 } }
+];
+
+async function ensureDashboard() {
+	const list = (await get('head', '/api/dashboards?limit=100')).items;
+	let dashboard = list.find((d) => d.name === DASHBOARD_NAME);
+	if (!dashboard) {
+		dashboard = await post('head', '/api/dashboards', { name: DASHBOARD_NAME, is_shared: true, layout: {} });
+		console.log(`  + дашборд «${DASHBOARD_NAME}»`);
+	}
+	const widgets = await get('head', `/api/dashboards/${dashboard.id}/widgets`);
+	const have = new Set((widgets.items ?? widgets).map((w) => w.config?.title));
+	for (const widget of DASHBOARD_WIDGETS) {
+		if (have.has(widget.config.title)) continue;
+		await post('head', `/api/dashboards/${dashboard.id}/widgets`, widget);
+		showcase.widgets = (showcase.widgets ?? 0) + 1;
+	}
+}
 
 async function ensureReports() {
 	const have = {};
@@ -974,10 +1050,20 @@ async function ensureFiles(orgsByShort) {
 	}
 }
 
+// SEED_PART: `all` (по умолчанию) — всё; `no-reports` — всё, кроме готовых отчётов; `reports-only` — только отчёты. Деление нужно стенду:
+// между частями deploy/scripts/seed_demo.sh запускает витрину (`app.mocks.demo_showcase`, растягивает историю сделок во времени),
+// и отчёты, снятые после неё, показывают живые цифры, а не нули.
+const PART = process.env.SEED_PART || 'all';
+
 async function main() {
-	console.log(`Сид демо-данных → ${BASE}`);
+	console.log(`Сид демо-данных → ${BASE}${PART === 'all' ? '' : ` (часть: ${PART})`}`);
 	// первым запросом каждого пользователя обязан быть GET /api/me: он создаёт локальную запись (JIT) и не требует согласия на ПДн
 	for (const who of ['admin', 'admin2', 'head', 'kam', 'auditor']) await login(who);
+	if (PART === 'reports-only') {
+		await block('Отчёты', ensureReports);
+		console.log('Готово:', JSON.stringify(showcase));
+		return;
+	}
 	const me = { kam: await get('kam', '/api/me'), head: await get('head', '/api/me'), admin: await get('admin', '/api/me') };
 
 	console.log('Команда…');
@@ -1028,6 +1114,7 @@ async function main() {
 		const found = await get(who, `/api/deals?q=${encodeURIComponent(title)}&limit=5`);
 		const existing = found.items.find((d) => d.title === title);
 		if (existing) {
+			await ensureDealProducts(who, existing, title, students, products);
 			// сделка уже есть: если она остановилась на маршруте раньше цели (сид шёл по старой воронке), доводим до цели с того места;
 			// историю не переписываем: сделка вне маршрута или уже у цели остаётся как есть
 			if (isB2b) {
@@ -1110,7 +1197,8 @@ async function main() {
 	});
 	await block('Согласования «четыре глаза»', ensureApprovals);
 	await block('Подписание', () => ensureSignatures(me));
-	await block('Отчёты', ensureReports);
+	await block('Дашборд «Обзор воронки»', ensureDashboard);
+	if (PART !== 'no-reports') await block('Отчёты', ensureReports);
 	await block('Хранение и системные настройки', ensureRetentionAndSettings);
 
 	console.log('Готово:', JSON.stringify({ ...summary, ...showcase }));

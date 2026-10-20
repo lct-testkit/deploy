@@ -2,21 +2,23 @@
 # Запускается в контейнере seed-demo (node:alpine, см. compose/docker-compose.yml): ждёт готовности API,
 # затем по порядку три сида. Каждый идемпотентен, повторный запуск ничего не дублирует.
 #
-#   SEED_ONLY=catalogs,demo,erasure   какие этапы выполнять (по умолчанию все три)
+#   SEED_ONLY=catalogs,demo,reports,erasure   какие этапы выполнять (по умолчанию все четыре)
 #
 # Порядок важен: справочники (направления, причины отказа, праздники, пользовательские поля) -> организации,
-# сделки, задачи, ЕГРЮЛ, SLA -> сценарии удаления ПДн. Мягкие предупреждения скриптов («! переход не выполнен»,
+# сделки, задачи, ЕГРЮЛ, SLA -> готовые отчёты -> сценарии удаления ПДн. Отчёты вынесены отдельным этапом, чтобы
+# scripts/seed_demo.sh мог между `demo` и `reports` растянуть историю сделок во времени (app.mocks.demo_showcase):
+# отчёты, снятые после этого, показывают живые цифры, а не нули. Мягкие предупреждения скриптов («! переход не выполнен»,
 # например передача в LMS без LMS_BASE_URL) код возврата не меняют; жёсткая ошибка любого этапа даёт код != 0.
 set -eu
 
 APP_URL="${APP_URL:-http://caddy:8080}"
 export APP_URL
-ONLY="${SEED_ONLY:-catalogs,demo,erasure}"
+ONLY="${SEED_ONLY:-catalogs,demo,reports,erasure}"
 
 for s in $(echo "${ONLY}" | tr ',' ' '); do
   case "${s}" in
-    catalogs|demo|erasure) ;;
-    *) echo "seed: неизвестный этап '${s}' (доступно: catalogs, demo, erasure)" >&2; exit 2 ;;
+    catalogs|demo|reports|erasure) ;;
+    *) echo "seed: неизвестный этап '${s}' (доступно: catalogs, demo, reports, erasure)" >&2; exit 2 ;;
   esac
 done
 
@@ -31,16 +33,17 @@ until wget -q -T 5 -O /dev/null "${APP_URL}/health/ready"; do
   sleep 2
 done
 
-step() { # step <этап> <файл> <описание>
+step() { # step <этап> <файл> <описание> [SEED_PART]
   case ",${ONLY}," in
     *",$1,"*) ;;
     *) echo "seed: этап $1 пропущен (SEED_ONLY)"; return 0 ;;
   esac
   echo "== seed: $1 — $3 =="
-  node "/seed/$2"
+  SEED_PART="${4:-all}" node "/seed/$2"
 }
 
 step catalogs catalogs.mjs "справочники: направления, причины отказа, праздники 2026, пользовательские поля"
-step demo seed-demo.mjs "организации, контакты, сделки, задачи, реестр ЕГРЮЛ, SLA-правила"
+step demo seed-demo.mjs "организации, контакты, сделки, задачи, реестр ЕГРЮЛ, SLA-правила, дашборд" no-reports
+step reports seed-demo.mjs "готовые отчёты" reports-only
 step erasure erasure.mjs "сценарии «Удаление ПДн» и «Согласования»"
 echo "seed: готово"
