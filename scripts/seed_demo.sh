@@ -57,10 +57,26 @@ run_args=(--rm --no-deps -T)
 [[ -n "${ONLY}" ]] && run_args+=(-e "SEED_ONLY=${ONLY}")
 
 echo "seed: заливаю моковые данные${ONLY:+ (этапы: ${ONLY})}"
-if dc --profile demo-data run "${run_args[@]}" seed-demo; then
-  echo "seed: моковые данные залиты"
+
+seed_fail() {
+  echo "seed: ОШИБКА (код $1). Повтор безопасен: bash scripts/seed_demo.sh" >&2
+  exit "$1"
+}
+
+# Полный прогон идёт в три приёма: справочники и сделки -> витрина (история во времени, SLA, прогресс обучения) ->
+# готовые отчёты и сценарии удаления ПДн. С `--only` выполняется ровно то, что попросили.
+if [[ -n "${ONLY}" ]]; then
+  dc --profile demo-data run "${run_args[@]}" seed-demo || seed_fail $?
 else
-  rc=$?
-  echo "seed: ОШИБКА (код ${rc}). Повтор безопасен: bash scripts/seed_demo.sh" >&2
-  exit "${rc}"
+  dc --profile demo-data run "${run_args[@]}" -e SEED_ONLY=catalogs,demo seed-demo || seed_fail $?
+  # Сиды ходят в API, а он создаёт всё «сейчас»: у всех сделок один момент перехода, среднее время в статусе 0, SLA либо
+  # у всех в норме, либо у всех просрочен. Витрина растягивает историю (запуск под суперпользователем БД: история переходов
+  # неизменяема для роли приложения) и раскладывает 4 просрочки SLA. Сбой витрины (например, старый образ api без модуля)
+  # установку не ломает: демо остаётся рабочим, только с нулевыми сроками.
+  echo "seed: витрина демо-данных (история сделок во времени, SLA, прогресс обучения)"
+  if ! dc run --rm --no-deps -T --entrypoint python migrate -m app.mocks.demo_showcase; then
+    echo "seed: ! витрина не применена (образ api без app.mocks.demo_showcase?) — отчёты покажут нулевые сроки" >&2
+  fi
+  dc --profile demo-data run "${run_args[@]}" -e SEED_ONLY=reports,erasure seed-demo || seed_fail $?
 fi
+echo "seed: моковые данные залиты"

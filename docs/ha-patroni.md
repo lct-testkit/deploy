@@ -201,6 +201,31 @@ curl -s -u admin:<пароль> http://10.10.0.1:4001/db/backup -o /var/backups/
 работающем кластере: `curl -u admin:… -H 'Content-Type: application/octet-stream' --data-binary @файл http://10.10.0.1:4001/db/load`.
 Данные самих узлов лежат в `/srv/rqlite`.
 
+## Мониторинг (Grafana) в HA
+
+`https://<домен>/grafana/` отвечает **404**, пока Prometheus и Grafana не запущены: это не ошибка маршрутизации. Caddy проксирует
+`/grafana/*` на контейнер `grafana` (профиль compose `monitoring`), а когда контейнера нет, отвечает 404 вместо 502 (`handle_errors`
+в `compose/Caddyfile`). Стек на лидере поднимает `rtk-ha-stack.sh` командой `docker compose -p rtk-crm -f docker-compose.yml
+-f docker-compose.ha.yml --env-file .env … up -d`, а профили берутся только из `COMPOSE_PROFILES` в `.env` — по умолчанию там один `mail`.
+Мониторинг в HA сам не включается; оверлей `docker-compose.ha.yml` его не отключает и не меняет (Prometheus/Grafana от Postgres
+не зависят и в оверлее не упоминаются).
+
+Чтобы включить — на **каждом** узле (колбэк поднимает стек на новом лидере):
+
+```bash
+cd /opt/rtk-crm/compose
+# образы prometheus и grafana должны лежать на узле (в офлайн-бандле они есть: scripts/bundle_install.sh --monitoring)
+sed -i 's/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=mail,monitoring/' .env     # или добавить строку, если её нет
+grep -q '^GRAFANA_ANONYMOUS_VIEWER=' .env || echo 'GRAFANA_ANONYMOUS_VIEWER=true' >> .env   # гостевой просмотр для демо; для боя — false
+grep -E '^GRAFANA_ADMIN_PASSWORD=' .env || echo 'нет GRAFANA_ADMIN_PASSWORD: gen_env.sh задаёт его при установке'
+# на лидере:
+docker compose -p rtk-crm -f docker-compose.yml -f docker-compose.ha.yml --env-file .env --env-file .env.images up -d prometheus grafana
+curl -s -o /dev/null -w '%{http_code}\n' https://<домен>/grafana/api/health      # ожидается 200
+```
+
+Prometheus скрейпит реплики `api` и `worker` на лидере, данные (`prometheus_data`, `grafana_data`) лежат в томах узла и при failover не
+переезжают: на новом лидере история метрик начинается заново. Это ожидаемо; для сквозной истории нужен внешний Prometheus.
+
 ## Грабли, на которые мы наступили
 
 - Колбэк, запущенный из процесса Patroni, наследует его группы: если `postgres` добавили в `docker` уже после старта

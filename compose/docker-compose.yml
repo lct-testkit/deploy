@@ -553,6 +553,9 @@ services:
       APP_URL: http://caddy:8080
       # Под каким адресом представляться: из него Keycloak строит issuer токенов (см. seed/lib.mjs).
       SEED_PUBLIC_URL: ${BASE_URL:-http://localhost:8080}
+      # Адрес приёмника для исходящей webhook-подписки сида: Caddy отвечает 200 на /demo-webhook (раньше событие уходило на /site/,
+      # где POST не принимается — все доставки висели «Ошибка, будет повтор»). Внутренний адрес: API-контейнер ходит к нему без DNS и TLS.
+      SEED_WEBHOOK_URL: http://caddy:8080/demo-webhook
       # Presigned-ссылки S3 подписаны на публичный адрес, из сети compose он недоступен: запросы идут в seaweedfs.
       SEED_S3_PUBLIC_URL: ${S3_PUBLIC_ENDPOINT_URL:-http://localhost:8333}
       SEED_S3_INTERNAL_URL: http://seaweedfs:8333
